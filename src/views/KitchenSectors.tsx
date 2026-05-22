@@ -20,10 +20,11 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
   const [manualInput, setManualInput] = useState('');
   const manualRef = useRef<HTMLInputElement>(null);
 
-  // ── Buffer invisível para captura do QR Code ───────────────────────────────
-  const qrBuffer        = useRef('');
-  const qrLastKeyTime   = useRef(0);
-  const qrFlushTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── Guardar os pedidos mais atualizados em uma ref para evitar stale closure ──
+  const ordersRef = useRef(orders);
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
 
   // ── Fonte da última ação (para feedback visual) ────────────────────────────
   const [lastSource, setLastSource] = useState<'qr' | 'manual' | null>(null);
@@ -41,7 +42,7 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
     setTimeout(() => setLastSource(null), 1500);
 
     const ficha = await firebaseService.resolveFicha(cleaned);
-    const order  = orders.find(
+    const order  = ordersRef.current.find(
       o => String(o.ticket_number).trim() === ficha && o.status !== 'delivered'
     );
 
@@ -67,61 +68,84 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
     }
 
     if (source === 'manual') setManualInput('');
-  }, [orders]);
+  }, []);
 
-  // ── Listener global de teclado — captura QR Code ──────────────────────────
-  // Funciona mesmo se o foco estiver no campo manual, pois detecta pela
-  // velocidade. Se for QR, consome o evento e NÃO deixa cair no campo manual.
+  // ── Listener global de teclado e inteligência de separação (Leitor vs Teclado) ──
+  // Resolve o problema de perder o primeiro dígito ao bipar, o que causava o erro "Ficha sem pedido".
+  // Bloqueia qualquer vazamento de caractere do leitor de QR Code para os campos de digitação manual.
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const now = Date.now();
-      const interval = now - qrLastKeyTime.current;
-      qrLastKeyTime.current = now;
+    let scanBuffer: { key: string; time: number }[] = [];
+    let flushTimeout: NodeJS.Timeout | null = null;
 
-      // Enter pode ser fim do QR ou confirmação manual — decidimos pelo buffer
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Ignorar teclas modificadoras de controle
+      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
+
+      const now = Date.now();
+
+      // Tecla Enter encerra a digitação de QR se houver dados em buffer rápido
       if (e.key === 'Enter') {
-        if (qrBuffer.current.length >= QR_MIN_LENGTH) {
-          // É fim de leitura QR → processa e bloqueia o Enter de cair no form
+        if (scanBuffer.length > 0) {
           e.preventDefault();
           e.stopPropagation();
-          const code = qrBuffer.current;
-          qrBuffer.current = '';
-          if (qrFlushTimer.current) clearTimeout(qrFlushTimer.current);
+          const code = scanBuffer.map(item => item.key).join('').trim();
+          scanBuffer = [];
+          if (flushTimeout) clearTimeout(flushTimeout);
           processCode(code, 'qr');
         }
-        // Se buffer vazio, deixa o Enter passar normalmente (submit do form manual)
         return;
       }
 
-      // Caractere normal: verifica se é parte de uma sequência de QR
+      // Se for uma tecla de caractere único (letras, dígitos, símbolos)
       if (e.key.length === 1) {
-        const isScanner = interval < QR_MAX_INTERVAL_MS || qrBuffer.current.length > 0;
+        // Intercepta e previne ações secundárias ou duplicações imediatamente
+        e.preventDefault();
+        e.stopPropagation();
 
-        if (isScanner) {
-          // Acumula no buffer QR e bloqueia o char de cair no campo manual
-          e.preventDefault();
-          e.stopPropagation();
-          qrBuffer.current += e.key;
+        if (flushTimeout) clearTimeout(flushTimeout);
 
-          // Timer de segurança: se não vier Enter, processa após 150ms de silêncio
-          if (qrFlushTimer.current) clearTimeout(qrFlushTimer.current);
-          qrFlushTimer.current = setTimeout(() => {
-            if (qrBuffer.current.length >= QR_MIN_LENGTH) {
-              const code = qrBuffer.current;
-              qrBuffer.current = '';
-              processCode(code, 'qr');
-            } else {
-              qrBuffer.current = '';
+        scanBuffer.push({ key: e.key, time: now });
+
+        // Agenda uma decisão para daqui a 50 milissegundos de silêncio
+        flushTimeout = setTimeout(() => {
+          if (scanBuffer.length === 0) return;
+
+          // Se veio mais de 1 caractere, calculamos a cadência média do fluxo
+          let isScanner = false;
+          if (scanBuffer.length > 1) {
+            let totalInterval = 0;
+            for (let i = 1; i < scanBuffer.length; i++) {
+              totalInterval += (scanBuffer[i].time - scanBuffer[i - 1].time);
             }
-          }, 150);
-        }
-        // Se não for scanner, deixa o char cair normalmente no campo manual focado
+            const avgInterval = totalInterval / (scanBuffer.length - 1);
+            if (avgInterval < QR_MAX_INTERVAL_MS) {
+              isScanner = true;
+            }
+          }
+
+          if (isScanner) {
+            // Processa como leitura nativa do leitor de QR/Código de barras
+            const code = scanBuffer.map(item => item.key).join('').trim();
+            scanBuffer = [];
+            processCode(code, 'qr');
+          } else {
+            // Processa como digitação manual lenta (Teclado Humano)
+            const typedText = scanBuffer.map(item => item.key).join('');
+            setManualInput(prev => prev + typedText);
+            scanBuffer = [];
+            // Foca a caixa de diálogo para indicar feedback de escrita ativa
+            manualRef.current?.focus();
+          }
+        }, 50);
       }
     };
 
-    // capture: true garante que interceptamos antes de qualquer elemento
+    // Usamos o capture: true para sermos os primeiros a receber os dados do dispositivo físico
     window.addEventListener('keydown', onKeyDown, { capture: true });
-    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, { capture: true });
+      if (flushTimeout) clearTimeout(flushTimeout);
+    };
   }, [processCode]);
 
   // ── Submit do form manual ──────────────────────────────────────────────────
