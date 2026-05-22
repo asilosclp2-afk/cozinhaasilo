@@ -141,20 +141,20 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
       // If more than 100ms passed, it's likely a new scan or manual typing
       // Increased to 100ms for more tolerance
       if (currentTime - lastKeyTime.current > 100) {
-        scanBuffer.current = '';
+        scanBuffer.current = e.key.length === 1 ? e.key : '';
+      } else {
+        if (e.key === 'Enter') {
+          const code = scanBuffer.current.trim();
+          if (code) {
+            processScannedCode(code);
+          }
+          scanBuffer.current = '';
+        } else if (e.key.length === 1) {
+          scanBuffer.current += e.key;
+        }
       }
       
       lastKeyTime.current = currentTime;
-
-      if (e.key === 'Enter') {
-        const code = scanBuffer.current.trim();
-        if (code) {
-          processScannedCode(code);
-        }
-        scanBuffer.current = '';
-      } else if (e.key.length === 1) {
-        scanBuffer.current += e.key;
-      }
     };
 
     window.addEventListener('keydown', handleKeyDown);

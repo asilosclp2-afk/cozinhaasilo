@@ -9,8 +9,9 @@ import { firebaseService } from '../services/firebaseService';
 // Leitores QR/barcode enviam todos os chars em < 50ms entre teclas.
 // Humano digita em >= 100ms entre teclas.
 // ─────────────────────────────────────────────────────────────────────────────
-const QR_MAX_INTERVAL_MS = 80;   // intervalo máximo entre chars para ser considerado scanner
-const QR_MIN_LENGTH     = 2;    // tamanho mínimo para processar como QR
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANTES DE DETECÇÃO
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function KitchenSectors({ orders }: { orders: Order[] }) {
   const [showNotification, setShowNotification] = useState(false);
@@ -42,8 +43,17 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
     setTimeout(() => setLastSource(null), 1500);
 
     const ficha = await firebaseService.resolveFicha(cleaned);
-    const order  = ordersRef.current.find(
-      o => String(o.ticket_number).trim() === ficha && o.status !== 'delivered'
+
+    // Normalização para evitar incompatibilidade por zeros à esquerda (ex: "05" vs "5") ou espaços
+    const normalize = (val: string) => {
+      const t = val.trim().toLowerCase();
+      const stripped = t.replace(/^0+/, '');
+      return stripped === '' ? '0' : stripped;
+    };
+
+    const normFicha = normalize(ficha);
+    const order = ordersRef.current.find(
+      o => normalize(String(o.ticket_number)) === normFicha && o.status !== 'delivered'
     );
 
     if (order) {
@@ -70,81 +80,46 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
     if (source === 'manual') setManualInput('');
   }, []);
 
-  // ── Listener global de teclado e inteligência de separação (Leitor vs Teclado) ──
-  // Resolve o problema de perder o primeiro dígito ao bipar, o que causava o erro "Ficha sem pedido".
-  // Bloqueia qualquer vazamento de caractere do leitor de QR Code para os campos de digitação manual.
+  // ── Buffer invisível para captura do QR Code (Leitor de Código de Barras / QR Code) ──
+  const scanBuffer = useRef('');
+  const qrLastKeyTime = useRef(0);
+
+  // ── Listener global de teclado ──
   useEffect(() => {
-    let scanBuffer: { key: string; time: number }[] = [];
-    let flushTimeout: NodeJS.Timeout | null = null;
-
     const onKeyDown = (e: KeyboardEvent) => {
-      // Ignorar teclas modificadoras de controle
-      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
-
-      const now = Date.now();
-
-      // Tecla Enter encerra a digitação de QR se houver dados em buffer rápido
-      if (e.key === 'Enter') {
-        if (scanBuffer.length > 0) {
-          e.preventDefault();
-          e.stopPropagation();
-          const code = scanBuffer.map(item => item.key).join('').trim();
-          scanBuffer = [];
-          if (flushTimeout) clearTimeout(flushTimeout);
-          processCode(code, 'qr');
-        }
+      // Se o usuário estiver ativamente digitando no input manual, 
+      // deixamos a digitação ocorrer nativamente para não interferir.
+      const target = e.target as HTMLElement;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) {
         return;
       }
 
-      // Se for uma tecla de caractere único (letras, dígitos, símbolos)
-      if (e.key.length === 1) {
-        // Intercepta e previne ações secundárias ou duplicações imediatamente
-        e.preventDefault();
-        e.stopPropagation();
+      // Ignorar teclas de controle e de layout
+      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') return;
 
-        if (flushTimeout) clearTimeout(flushTimeout);
-
-        scanBuffer.push({ key: e.key, time: now });
-
-        // Agenda uma decisão para daqui a 50 milissegundos de silêncio
-        flushTimeout = setTimeout(() => {
-          if (scanBuffer.length === 0) return;
-
-          // Se veio mais de 1 caractere, calculamos a cadência média do fluxo
-          let isScanner = false;
-          if (scanBuffer.length > 1) {
-            let totalInterval = 0;
-            for (let i = 1; i < scanBuffer.length; i++) {
-              totalInterval += (scanBuffer[i].time - scanBuffer[i - 1].time);
-            }
-            const avgInterval = totalInterval / (scanBuffer.length - 1);
-            if (avgInterval < QR_MAX_INTERVAL_MS) {
-              isScanner = true;
-            }
-          }
-
-          if (isScanner) {
-            // Processa como leitura nativa do leitor de QR/Código de barras
-            const code = scanBuffer.map(item => item.key).join('').trim();
-            scanBuffer = [];
+      const currentTime = Date.now();
+      
+      // Se o intervalo for > 100ms, assumimos nova leitura do scanner
+      if (currentTime - qrLastKeyTime.current > 100) {
+        scanBuffer.current = e.key.length === 1 ? e.key : '';
+      } else {
+        if (e.key === 'Enter') {
+          const code = scanBuffer.current.trim();
+          if (code) {
             processCode(code, 'qr');
-          } else {
-            // Processa como digitação manual lenta (Teclado Humano)
-            const typedText = scanBuffer.map(item => item.key).join('');
-            setManualInput(prev => prev + typedText);
-            scanBuffer = [];
-            // Foca a caixa de diálogo para indicar feedback de escrita ativa
-            manualRef.current?.focus();
           }
-        }, 50);
+          scanBuffer.current = '';
+        } else if (e.key.length === 1) {
+          scanBuffer.current += e.key;
+        }
       }
+
+      qrLastKeyTime.current = currentTime;
     };
 
-    // Usamos o capture: true para sermos os primeiros a receber os dados do dispositivo físico
     window.addEventListener('keydown', onKeyDown, { capture: true });
     return () => {
       window.removeEventListener('keydown', onKeyDown, { capture: true });
-      if (flushTimeout) clearTimeout(flushTimeout);
     };
   }, [processCode]);
 
