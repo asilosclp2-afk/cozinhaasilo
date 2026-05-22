@@ -278,8 +278,9 @@ export const firebaseService = {
 
   async createOrder(ticketNumber: string, items: any[]): Promise<Order> {
     try {
+      const normalizedTicket = ticketNumber.trim().replace(/^0+/, '') || '0';
       const docData = {
-        ticket_number: ticketNumber,
+        ticket_number: normalizedTicket,
         items,
         status: 'pending',
         created_at: serverTimestamp(),
@@ -359,9 +360,10 @@ export const firebaseService = {
 
   async checkFichaActive(ticketNumber: string): Promise<Order | null> {
     try {
+      const normalizedTicket = ticketNumber.trim().replace(/^0+/, '') || '0';
       const q = query(
         collection(db, COLLECTIONS.ORDERS),
-        where('ticket_number', '==', ticketNumber),
+        where('ticket_number', '==', normalizedTicket),
         where('status', 'in', ['pending', 'preparing', 'ready']),
         limit(1)
       );
@@ -679,21 +681,127 @@ export const firebaseService = {
 
   async resolveFicha(code: string): Promise<string> {
     try {
-      // 1. Direct match with numeric or FICHA-X pattern
-      if (/^\d+$/.test(code)) return code;
-      const match = code.match(/FICHA[- ]?(\d+)/i);
-      if (match) return match[1];
+      const cleaned = code.trim();
+      if (!cleaned) return '';
+
+      // Smart URL and prefix detection to extract ficha number
+      let urlFicha: string | null = null;
+      if (cleaned.startsWith('http://') || cleaned.startsWith('https://') || cleaned.includes('.app') || cleaned.includes('/') || cleaned.includes('?')) {
+        try {
+          // Parse as URL if possible, otherwise clean and search query params/slashes manually
+          let urlObj: URL | null = null;
+          try {
+            urlObj = new URL(cleaned);
+          } catch (e) {
+            // Try to make it a valid URL if missing protocol
+            if (!cleaned.startsWith('http')) {
+              urlObj = new URL('http://' + cleaned);
+            }
+          }
+
+          if (urlObj) {
+            const params = ['ficha', 'ticket', 'id', 'num', 'number', 'code', 'q'];
+            for (const param of params) {
+              const val = urlObj.searchParams.get(param);
+              if (val && /^\d+$/.test(val)) {
+                urlFicha = val;
+                break;
+              }
+            }
+            if (!urlFicha) {
+              const segments = urlObj.pathname.split('/').filter(Boolean);
+              for (let i = segments.length - 1; i >= 0; i--) {
+                const segment = segments[i];
+                if (/^\d+$/.test(segment)) {
+                  urlFicha = segment;
+                  break;
+                } else {
+                  const m = segment.match(/FICHA[- _]?(\d+)/i);
+                  if (m) {
+                    urlFicha = m[1];
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Smart URL processing in resolveFicha failed:", e);
+        }
+      }
+
+      if (urlFicha) {
+        return urlFicha.replace(/^0+/, '') || '0';
+      }
+
+      // 1. Direct match with numeric (normalization: strip leading zeros)
+      if (/^\d+$/.test(cleaned)) {
+        return cleaned.replace(/^0+/, '') || '0';
+      }
+
+      // Match FICHA[- _]?(\d+) pattern (normalization: strip leading zeros)
+      const match = cleaned.match(/FICHA[- _]?(\d+)/i);
+      if (match) {
+        return match[1].replace(/^0+/, '') || '0';
+      }
 
       // 2. Check Extra Fichas collection
-      const q = query(collection(db, COLLECTIONS.EXTRA_FICHAS), where('code', '==', code));
+      const q = query(collection(db, COLLECTIONS.EXTRA_FICHAS), where('code', '==', cleaned));
       const snap = await getDocs(q);
       if (!snap.empty) {
         return snap.docs[0].data().alias;
       }
 
-      return code; // Fallback to raw code
+      // 3. If it's a custom/alphanumeric QR code and not found in Extra Fichas,
+      // AUTOMATICALLY save/register it in the system. Extract any numeric sequences
+      // to determine a smart user-friendly displays/alias (e.g., https://.../047 -> "47")
+      let autoAlias = cleaned;
+      const digitMatch = cleaned.match(/(\d+)/);
+      if (digitMatch) {
+        autoAlias = digitMatch[1].replace(/^0+/, '') || '0';
+      }
+
+      // Save to database so this code is forever recognized and mapped to this alias safely
+      const newFichaRef = doc(collection(db, COLLECTIONS.EXTRA_FICHAS));
+      await setDoc(newFichaRef, {
+        code: cleaned,
+        alias: autoAlias,
+        created_at: serverTimestamp()
+      });
+
+      return autoAlias;
     } catch (e) {
+      console.error("resolveFicha error:", e);
       return code;
+    }
+  },
+
+  async registerExtraFichasBatch(items: { code: string, alias: string }[]): Promise<void> {
+    try {
+      const snap = await getDocs(collection(db, COLLECTIONS.EXTRA_FICHAS));
+      const existingCodes = new Set(snap.docs.map(doc => doc.data().code));
+
+      const batch = writeBatch(db);
+      let count = 0;
+      
+      for (const item of items) {
+        if (!existingCodes.has(item.code)) {
+          const docRef = doc(collection(db, COLLECTIONS.EXTRA_FICHAS));
+          batch.set(docRef, {
+            code: item.code,
+            alias: item.alias,
+            created_at: serverTimestamp()
+          });
+          count++;
+          if (count >= 400) break;
+        }
+      }
+      
+      if (count > 0) {
+        await batch.commit();
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, COLLECTIONS.EXTRA_FICHAS);
     }
   }
 };

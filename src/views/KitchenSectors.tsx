@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Bell, Flame, Utensils, Star, Package, AlertCircle, QrCode, Keyboard } from 'lucide-react';
-import { Order } from '../types';
+import { Order, MenuItem } from '../types';
 import { firebaseService } from '../services/firebaseService';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -17,6 +17,22 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
   const [showNotification, setShowNotification] = useState(false);
   const [alertMessage, setAlertMessage]         = useState<string | null>(null);
 
+  // ── Cardápio para mapear os itens do QR de forma reativa nos setores ────────
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const menuItemsRef = useRef<MenuItem[]>([]);
+
+  useEffect(() => {
+    menuItemsRef.current = menuItems;
+  }, [menuItems]);
+
+  useEffect(() => {
+    firebaseService.getMenu().then(m => {
+      if (m) setMenuItems(m);
+    }).catch(err => {
+      console.error("Failed to load menu in sectors:", err);
+    });
+  }, []);
+
   // ── Estado do campo manual (digitação humana) ──────────────────────────────
   const [manualInput, setManualInput] = useState('');
   const manualRef = useRef<HTMLInputElement>(null);
@@ -30,6 +46,9 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
   // ── Fonte da última ação (para feedback visual) ────────────────────────────
   const [lastSource, setLastSource] = useState<'qr' | 'manual' | null>(null);
 
+  // ── Estado do último QR Code bipado para mostrar no canto inferior direito ──
+  const [lastScannedQrFicha, setLastScannedQrFicha] = useState<string | null>(null);
+
   const audioRef = useRef(new Audio('https://assets.mixkit.co/active_storage/sfx/2847/2847-preview.mp3'));
 
   const pendingOrders = orders.filter(o => o.status === 'pending' || o.status === 'preparing');
@@ -42,8 +61,6 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
     setLastSource(source);
     setTimeout(() => setLastSource(null), 1500);
 
-    const ficha = await firebaseService.resolveFicha(cleaned);
-
     // Normalização para evitar incompatibilidade por zeros à esquerda (ex: "05" vs "5") ou espaços
     const normalize = (val: string) => {
       const t = val.trim().toLowerCase();
@@ -51,7 +68,81 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
       return stripped === '' ? '0' : stripped;
     };
 
+    // Se for entrada via QR Code, tentamos extrair ficha e itens usando delimitadores para autoinserção
+    if (source === 'qr') {
+      const separators = ['|', ';', ':'];
+      let parsedFicha: string | null = null;
+      let parsedItems: string[] = [];
+
+      for (const sep of separators) {
+        if (cleaned.includes(sep)) {
+          const parts = cleaned.split(sep);
+          const possibleFicha = parts[0].trim();
+          const possibleItems = parts.slice(1).join(sep).split(/[,;]/).map(i => i.trim()).filter(Boolean);
+          if (possibleFicha && possibleItems.length > 0) {
+            parsedFicha = possibleFicha;
+            parsedItems = possibleItems;
+            break;
+          }
+        }
+      }
+
+      // Suporte a JSON estruturado, caso o scanner do QR envie JSON
+      if (!parsedFicha && cleaned.startsWith('{')) {
+        try {
+          const data = JSON.parse(cleaned);
+          if (data.items && Array.isArray(data.items)) {
+            const itemNames = data.items.map((it: any) => typeof it === 'string' ? it : (it.name || ''));
+            if (data.ticket_number || data.ficha) {
+              parsedFicha = String(data.ticket_number || data.ficha);
+              parsedItems = itemNames;
+            }
+          }
+        } catch (e) {}
+      }
+
+      // Se detectou multiplos itens no QR Code recebido, criamos o pedido diretamente
+      if (parsedFicha && parsedItems.length > 0) {
+        const resolvedFicha = await firebaseService.resolveFicha(parsedFicha);
+        const normFicha = normalize(resolvedFicha);
+        setLastScannedQrFicha(normFicha);
+
+        // Mapeia strings para os itens do cardápio cadastrado para coletar categorias, setores e valores automaticamente
+        const orderItems = parsedItems.map(itemStr => {
+          const trimmed = itemStr.toLowerCase();
+          const matched = menuItemsRef.current.find(m => m.name.toLowerCase() === trimmed);
+          return {
+            name: matched ? matched.name : itemStr,
+            quantity: 1,
+            completed: false,
+            sector: matched ? (matched.sector || 'Outros') : 'Outros',
+            category_name: matched ? (matched.category_name || 'Outros') : 'Outros',
+            price: matched ? (matched.price || 0) : 0
+          };
+        });
+
+        try {
+          await firebaseService.createOrder(resolvedFicha, orderItems);
+          setAlertMessage(null);
+          new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3').play().catch(() => {});
+          return;
+        } catch (error: any) {
+          console.error("Falha ao criar o pedido via QR Code nos setores:", error);
+          setAlertMessage(`Erro ao inserir ficha QR: ${error.message || error}`);
+          new Audio('https://assets.mixkit.co/active_storage/sfx/2847/2847-preview.mp3').play().catch(() => {});
+          return;
+        }
+      }
+    }
+
+    const ficha = await firebaseService.resolveFicha(cleaned);
     const normFicha = normalize(ficha);
+    
+    // Armazena se a origem for QR Code
+    if (source === 'qr') {
+      setLastScannedQrFicha(normFicha);
+    }
+
     const order = ordersRef.current.find(
       o => normalize(String(o.ticket_number)) === normFicha && o.status !== 'delivered'
     );
@@ -161,6 +252,18 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
     return groupedItems.filter(i => i.sector === sectorId);
   };
 
+  // Procurar o pedido da última ficha bipada por QR Code de forma reativa
+  const scannedOrder = lastScannedQrFicha
+    ? orders.find(o => {
+        const normalizeVal = (val: string) => {
+          const t = val.trim().toLowerCase();
+          const stripped = t.replace(/^0+/, '');
+          return stripped === '' ? '0' : stripped;
+        };
+        return normalizeVal(String(o.ticket_number)) === normalizeVal(lastScannedQrFicha);
+      })
+    : null;
+
   return (
     <div className="fixed inset-0 pl-20 bg-[#F5F5F0] flex flex-col overflow-hidden">
       <style>{`
@@ -179,11 +282,11 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
             <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Consolidado por Setor</p>
           </div>
 
-          {/* Campo manual — só aceita digitação humana */}
+          {/* Campo manual — aceita digitação física ou cliques no teclado virtual */}
           <form onSubmit={handleManualSubmit} className="flex items-center gap-3">
-            <div className={`bg-[#1A1A1A] text-white px-6 py-3 rounded-2xl border-2 shadow-2xl flex items-center gap-4 transition-all
+            <div className={`bg-[#1A1A1A] text-white px-5 py-2.5 rounded-2xl border-2 shadow-2xl flex items-center gap-3 transition-all
               ${lastSource === 'manual' ? 'border-green-400 scale-105' : 'border-orange-500'}`}>
-              <span className="text-orange-500 font-black text-3xl">#</span>
+              <span className="text-orange-500 font-black text-2xl">#</span>
               <input
                 ref={manualRef}
                 type="text"
@@ -192,24 +295,52 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
                 value={manualInput}
                 onChange={e => setManualInput(e.target.value)}
                 placeholder="---"
-                className="bg-transparent border-none focus:ring-0 text-4xl font-black tabular-nums w-24 p-0 placeholder:text-gray-700"
+                className="bg-transparent border-none focus:ring-0 text-3xl font-black tabular-nums w-20 p-0 placeholder:text-gray-700"
               />
               <button type="submit" className="hidden" />
             </div>
 
+            {/* Teclado numérico virtual para fácil toque de Saída/Zerar */}
+            <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl shadow-sm border border-black/5">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map(digit => (
+                <button
+                  key={digit}
+                  type="button"
+                  onClick={() => setManualInput(prev => prev + digit)}
+                  className="w-8 h-8 bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-900 font-bold rounded-lg text-sm flex items-center justify-center transition-all shadow-sm active:scale-95"
+                >
+                  {digit}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setManualInput(prev => prev.slice(0, -1))}
+                className="w-12 h-8 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-lg text-xs flex items-center justify-center transition-all shadow-sm active:scale-95"
+              >
+                Apagar
+              </button>
+              <button
+                type="submit"
+                disabled={!manualInput}
+                className="px-3 h-8 bg-[#5A5A40] hover:bg-[#4A4A30] text-white font-bold rounded-lg text-xs flex items-center justify-center transition-all shadow-sm disabled:opacity-50 active:scale-95"
+              >
+                OK
+              </button>
+            </div>
+
             {/* Indicador de fonte */}
             <div className="flex flex-col gap-1">
-              <div className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-1 rounded-lg transition-all
+              <div className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded transition-all
                 ${lastSource === 'qr' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                <QrCode className="w-3 h-3" /> QR Code
+                <QrCode className="w-2.5 h-2.5" /> QR Code
               </div>
-              <div className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-1 rounded-lg transition-all
+              <div className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded transition-all
                 ${lastSource === 'manual' ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                <Keyboard className="w-3 h-3" /> Teclado
+                <Keyboard className="w-2.5 h-2.5" /> Teclado
               </div>
             </div>
 
-            <p className="text-[10px] font-bold text-gray-400 uppercase w-32 leading-tight">
+            <p className="text-[10px] font-bold text-gray-400 uppercase w-32 leading-tight hidden xl:block">
               Entrada: QR Code • Teclado: Saída / Zerar Ficha
             </p>
           </form>
@@ -287,6 +418,121 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
         })}
       </div>
 
+      {/* ── Painel de Ficha QR no Canto Inferior Direito ──────────────────── */}
+      <AnimatePresence>
+        {lastScannedQrFicha && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="fixed bottom-6 right-6 w-96 bg-white rounded-[24px] shadow-2xl border-4 border-[#5A5A40] z-50 overflow-hidden flex flex-col max-h-[380px]"
+          >
+            {/* Header do Painel */}
+            <div className="bg-[#5A5A40] text-white px-5 py-4 flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-orange-400" />
+                <div>
+                  <h3 className="font-black text-lg tracking-tight leading-none">Ficha #{lastScannedQrFicha}</h3>
+                  <p className="text-[10px] text-white/70 uppercase font-bold tracking-wider mt-0.5">QR Code Bipado</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setLastScannedQrFicha(null)}
+                className="w-8 h-8 bg-white/10 hover:bg-white/20 active:scale-95 text-white flex items-center justify-center rounded-full transition-all text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Conteúdo - Lista de Produtos */}
+            <div className="p-4 overflow-y-auto flex-1 space-y-3 bg-[#F5F5F0]/30 min-h-[150px]">
+              {scannedOrder ? (
+                <>
+                  <div className="flex justify-between items-center border-b border-black/5 pb-2 mb-2">
+                    <span className="text-[10px] font-black text-gray-400 uppercase">Status:</span>
+                    <span className={`text-[10px] uppercase font-extrabold px-2.5 py-0.5 rounded-full ${
+                      scannedOrder.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                      scannedOrder.status === 'preparing' ? 'bg-orange-100 text-orange-850' :
+                      scannedOrder.status === 'ready' ? 'bg-green-100 text-green-800 animate-pulse' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>
+                      {scannedOrder.status === 'pending' ? 'Pendente' : 
+                       scannedOrder.status === 'preparing' ? 'Preparando' : 
+                       scannedOrder.status === 'ready' ? 'Fichado Pronto!' : 
+                       'Entregue/Zerado'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {scannedOrder.items.map((item: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between p-2 bg-white rounded-xl shadow-sm border border-black/5">
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="w-6 h-6 bg-[#5A5A40]/10 text-[#5A5A40] rounded-lg flex items-center justify-center font-black text-xs shrink-0">
+                            {item.quantity}x
+                          </span>
+                          <span className="font-bold text-sm text-[#1A1A1A] truncate">{item.name}</span>
+                        </div>
+                        <span className="text-[9px] font-black uppercase text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded shrink-0">
+                          {item.sector || 'Geral'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="py-8 text-center text-gray-400 italic flex flex-col items-center justify-center gap-2 h-full">
+                  <AlertCircle className="w-10 h-10 text-orange-400 opacity-60 animate-bounce" />
+                  <div>
+                    <p className="font-extrabold text-[#1A1A1A] text-sm not-italic uppercase mb-0.5">Sem Pedido Ativo</p>
+                    <p className="text-xs">Ficha aguardando lançamento ou já entregue totalmente.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Ações rápidas */}
+            <div className="bg-gray-50 border-t border-black/5 p-3 flex gap-2 shrink-0">
+              {scannedOrder ? (
+                <>
+                  {scannedOrder.status !== 'delivered' && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await firebaseService.updateOrderStatus(scannedOrder.id, 'delivered');
+                        new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3').play().catch(() => {});
+                      }}
+                      className="flex-1 py-2 bg-green-600 hover:bg-green-700 active:scale-95 text-white text-xs font-black uppercase rounded-xl transition-all shadow-md"
+                    >
+                      ✓ Dar Saída / Zerar
+                    </button>
+                  )}
+                  {(scannedOrder.status === 'pending' || scannedOrder.status === 'preparing') && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await firebaseService.updateOrderStatus(scannedOrder.id, 'ready');
+                        new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3').play().catch(() => {});
+                      }}
+                      className="flex-1 py-2 bg-[#5A5A40] hover:bg-[#4A4A30] active:scale-95 text-white text-xs font-black uppercase rounded-xl transition-all shadow-md"
+                    >
+                      Pronto
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLastScannedQrFicha(null)}
+                  className="flex-1 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-bold uppercase rounded-xl transition-all"
+                >
+                  Fechar Painel
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Toast de alerta ─────────────────────────────────────────────────── */}
       <AnimatePresence>
         {alertMessage && (
@@ -294,7 +540,7 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
             initial={{ opacity: 0, y: 50, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="fixed bottom-6 right-6 w-80 z-50"
+            className="fixed bottom-6 left-6 w-80 z-50"
           >
             <div className="bg-[#EF4444] text-white rounded-3xl shadow-2xl border-4 border-white flex items-center p-5 gap-4">
               <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center shrink-0">

@@ -38,6 +38,8 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
   const scanBuffer = useRef<string>('');
   const lastKeyTime = useRef<number>(0);
 
+  const normalizeTicket = (t: string) => String(t).trim().replace(/^0+/, '') || '0';
+
   useEffect(() => {
     const checkTicket = async () => {
       if (!ticketNumber || ticketNumber.length < 1) {
@@ -45,7 +47,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
         return;
       }
       
-      const existing = orders.find(o => String(o.ticket_number).trim() === ticketNumber.trim());
+      const existing = orders.find(o => normalizeTicket(String(o.ticket_number)) === normalizeTicket(ticketNumber));
       setIsTicketInUse(!!existing);
       if (existing) {
         setScanStatus(`AVISO: Ficha #${ticketNumber} está em uso (${existing.status})`);
@@ -237,7 +239,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
     // 3. Is it a ticket number? (Numeric or FICHA-X, or Extra Ficha)
     const ficha = await firebaseService.resolveFicha(cleanedCode);
     
-    if (ficha && (ficha !== cleanedCode || /^\d+$/.test(ficha))) {
+    if (ficha) {
 
       // SUBMIT PREVIOUS: If scanning any ficha while we have items staged
       if (selectedItemsRef.current.length > 0 && ticketNumberRef.current) {
@@ -249,7 +251,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
         if (wasSame) return; // Stop here if it was a "confirm scan"
       }
 
-      const existingOrder = orders.find(o => String(o.ticket_number).trim() === ficha);
+      const existingOrder = orders.find(o => normalizeTicket(String(o.ticket_number)) === normalizeTicket(ficha));
       if (existingOrder) {
         if (existingOrder.status === 'pending' || existingOrder.status === 'preparing') {
           // Transition -> READY
@@ -415,7 +417,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
       return;
     }
 
-    const existingOrder = orders.find(o => o.ticket_number === ticketNumber);
+    const existingOrder = orders.find(o => normalizeTicket(String(o.ticket_number)) === normalizeTicket(ticketNumber));
     if (existingOrder) {
       if (existingOrder.status === 'pending' || existingOrder.status === 'preparing') {
         setScanStatus(`Ficha #${ticketNumber} - Marcando como PRONTO...`);

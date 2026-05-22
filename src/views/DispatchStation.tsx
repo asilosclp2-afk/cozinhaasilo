@@ -46,10 +46,11 @@ export default function DispatchStation({ orders }: { orders: Order[] }) {
 
     const ficha = await firebaseService.resolveFicha(cleaned);
 
+    const normalizeTicket = (t: string) => String(t).trim().replace(/^0+/, '') || '0';
+
     // Direct search in orders
     const order = orders.find(o => {
-      const ticket = String(o.ticket_number).trim();
-      return ticket === ficha;
+      return normalizeTicket(o.ticket_number) === normalizeTicket(ficha);
     });
 
     if (order) {

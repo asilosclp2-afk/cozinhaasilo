@@ -126,7 +126,7 @@ export function KitchenScanner() {
       // 3. Treat as Ficha Number
       const ficha = await firebaseService.resolveFicha(input);
 
-      if (ficha && (ficha !== input || /^\d+$/.test(ficha))) {
+      if (ficha) {
         
         // SWITCH OR SUBMIT: If scanning same ficha with items OR different ficha with items
         if (stagedItemsRef.current.length > 0 && activeFichaRef.current) {
