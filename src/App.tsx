@@ -188,7 +188,7 @@ export default function App() {
               active={currentView === 'reception'} 
               onClick={() => setCurrentView('reception')}
               icon={<Plus />}
-              label="Ficha"
+              label="Recepção"
             />
           )}
           {allowedViews.includes('kitchen') && (
