@@ -1,0 +1,143 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 3. Path Variable Hardening Primitive
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      // Identity Integrity (Pillar 2): Trust verified claims
+      // We check for the owner email OR the role in the database
+      return isSignedIn() && 
+        (
+          request.auth.token.email == 'asilosclp2@gmail.com' ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation Blueprints
+    function isValidCategory(data) {
+      return data.keys().hasAll(['name', 'created_at']) && 
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.created_at is timestamp;
+    }
+
+    function isValidMenuItem(data) {
+      return data.keys().hasAll(['name', 'category_id', 'price', 'sector', 'stock_quantity', 'active', 'created_at']) &&
+             data.name is string && data.name.size() > 0 &&
+             data.category_id is string &&
+             data.price is number && data.price >= 0 &&
+             data.sector is string &&
+             data.stock_quantity is number &&
+             data.active is bool &&
+             data.created_at is timestamp;
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['ticket_number', 'items', 'status', 'created_at', 'updated_at']) &&
+             data.ticket_number is string && data.ticket_number.size() > 0 &&
+             data.items is list && data.items.size() > 0 &&
+             // List Guarding (Pillar 5)
+             data.items[0] is map &&
+             data.status in ['pending', 'preparing', 'ready', 'delivered', 'closed'] &&
+             data.created_at is timestamp &&
+             data.updated_at is timestamp;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'role', 'allowed_views']) &&
+             data.name is string &&
+             data.role in ['admin', 'staff'] &&
+             data.allowed_views is string;
+    }
+
+    function isValidStockHistory(data) {
+      return data.keys().hasAll(['menu_item_id', 'type', 'quantity', 'user_name', 'created_at']) &&
+             data.menu_item_id is string &&
+             data.type in ['entry', 'exit'] &&
+             data.quantity is number &&
+             data.user_name is string &&
+             data.created_at is timestamp;
+    }
+
+    function isValidExtraFicha(data) {
+      return data.keys().hasAll(['code', 'alias', 'created_at']) &&
+             data.code is string && data.code.size() > 0 &&
+             data.alias is string &&
+             data.created_at is timestamp;
+    }
+
+    match /categories/{categoryId} {
+      allow read: if isSignedIn();
+      // Allow creation for seeding if it's a valid category
+      allow create: if isSignedIn() && isValidCategory(incoming());
+      allow update, delete: if isAdmin() && isValidCategory(incoming());
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      // Allow creation for seeding and self-binding
+      allow create: if isSignedIn() && isValidUser(incoming());
+      allow update: if isSignedIn() && isValidUser(incoming()) && (
+        isAdmin() || (userId == request.auth.uid)
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /menu_items/{itemId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidMenuItem(incoming());
+      allow update: if isSignedIn() && (
+        isAdmin() || 
+        // Staff can update stock_quantity
+        (incoming().diff(existing()).affectedKeys().hasOnly(['stock_quantity']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidOrder(incoming());
+      allow update: if isSignedIn() && isValidOrder(incoming()) && (
+        isAdmin() || 
+        // Status transitions
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updated_at']) ||
+        // Item updates
+        incoming().diff(existing()).affectedKeys().hasOnly(['items', 'updated_at'])
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /stock_history/{historyId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidStockHistory(incoming());
+      allow update, delete: if false; // Immutability
+    }
+
+    match /extra_fichas/{fichaId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidExtraFicha(incoming());
+      allow update: if false; // Use delete/create for changes
+      allow delete: if isAdmin();
+    }
+  }
+}

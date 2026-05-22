@@ -1,0 +1,7 @@
+{
+  "name": "Remix: Arraiá do Lar São Cristóvão - novo perfil",
+  "description": "Sistema de gerenciamento de produção e entrega para festas de arrecadação.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

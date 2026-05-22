@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "Category": {
+      "title": "Category",
+      "description": "Product category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Category name" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "created_at"]
+    },
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "A menu item available for order",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category_id": { "type": "string" },
+        "price": { "type": "number" },
+        "sector": { "type": "string" },
+        "qr_code": { "type": "string" },
+        "stock_quantity": { "type": "number" },
+        "active": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "category_id", "price", "sector", "stock_quantity", "active", "created_at"]
+    },
+    "StockHistory": {
+      "title": "StockHistory",
+      "description": "History of stock movements",
+      "type": "object",
+      "properties": {
+        "menu_item_id": { "type": "string" },
+        "type": { "type": "string", "enum": ["entry", "exit"] },
+        "quantity": { "type": "number" },
+        "user_name": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["menu_item_id", "type", "quantity", "user_name", "created_at"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Application user",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "staff"] },
+        "allowed_views": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "password", "role", "allowed_views", "created_at"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order",
+      "type": "object",
+      "properties": {
+        "ticket_number": { "type": "string" },
+        "items": { 
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "quantity": { "type": "number" }
+            }
+          }
+        },
+        "status": { "type": "string", "enum": ["pending", "preparing", "ready", "delivered", "closed"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ticket_number", "items", "status", "created_at", "updated_at"]
+    },
+    "ExtraFicha": {
+      "title": "ExtraFicha",
+      "description": "Registered extra ticket codes",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "description": "QR code raw content" },
+        "alias": { "type": "string", "description": "Display name or numeric ID for this code" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "created_at"]
+    }
+  },
+  "firestore": {
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Collection of product categories"
+    },
+    "/menu_items/{itemId}": {
+      "schema": "MenuItem",
+      "description": "Collection of menu items"
+    },
+    "/stock_history/{historyId}": {
+      "schema": "StockHistory",
+      "description": "Collection of stock movement records"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of users"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of customer orders"
+    },
+    "/extra_fichas/{fichaId}": {
+      "schema": "ExtraFicha",
+      "description": "Collection of registered extra tickets"
+    }
+  }
+}
