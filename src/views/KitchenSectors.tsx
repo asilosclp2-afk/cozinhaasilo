@@ -47,10 +47,16 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
 
     if (order) {
       setAlertMessage(null);
-      if (order.status === 'pending' || order.status === 'preparing') {
-        await firebaseService.updateOrderStatus(order.id, 'ready');
-        new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3').play().catch(() => {});
-      } else if (order.status === 'ready') {
+      if (source === 'qr') {
+        if (order.status === 'pending' || order.status === 'preparing') {
+          await firebaseService.updateOrderStatus(order.id, 'ready');
+          new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3').play().catch(() => {});
+        } else if (order.status === 'ready') {
+          await firebaseService.updateOrderStatus(order.id, 'delivered');
+          new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3').play().catch(() => {});
+        }
+      } else {
+        // Teclado (manual): apenas Saída ou Zerar Ficha (ambos resultam em entregue/zerado)
         await firebaseService.updateOrderStatus(order.id, 'delivered');
         new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3').play().catch(() => {});
       }
@@ -205,7 +211,7 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
             </div>
 
             <p className="text-[10px] font-bold text-gray-400 uppercase w-32 leading-tight">
-              Somente Saída: Ficha → Pronto · 2ª vez zera
+              Entrada: QR Code • Teclado: Saída / Zerar Ficha
             </p>
           </form>
         </div>
@@ -296,7 +302,7 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
                 <AlertCircle className="w-6 h-6 text-white" />
               </div>
               <div className="flex flex-col">
-                <span className="font-black uppercase tracking-tight text-sm leading-none mb-1">Entrada Proibida</span>
+                <span className="font-black uppercase tracking-tight text-sm leading-none mb-1">Ficha Sem Pedido</span>
                 <span className="text-[11px] font-semibold opacity-95 leading-tight">{alertMessage}</span>
               </div>
             </div>
