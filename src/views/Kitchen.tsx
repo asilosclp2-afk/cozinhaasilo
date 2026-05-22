@@ -84,7 +84,7 @@ export default function Kitchen({ orders }: { orders: Order[] }) {
         updateStatus(order.id, 'ready');
         // Play success sound
         try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
+          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3');
           audio.play().catch(() => {});
         } catch (e) {}
       } else if (order.status === 'ready') {
@@ -92,7 +92,7 @@ export default function Kitchen({ orders }: { orders: Order[] }) {
         updateStatus(order.id, 'delivered');
         // Play a different sound or the same one for delivery
         try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
+          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3');
           audio.play().catch(() => {});
         } catch (e) {}
       }

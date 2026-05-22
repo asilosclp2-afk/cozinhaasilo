@@ -49,6 +49,16 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
   // ── Estado do último QR Code bipado para mostrar no canto inferior direito ──
   const [lastScannedQrFicha, setLastScannedQrFicha] = useState<string | null>(null);
 
+  // ── Sincronização em tempo real do rascunho de pedido ativo na Recepção ──
+  const [activeReceptionDraft, setActiveReceptionDraft] = useState<{ ticket_number: string; items: { name: string; quantity: number }[] } | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = firebaseService.listenToActiveReceptionDraft((draft) => {
+      setActiveReceptionDraft(draft);
+    });
+    return () => unsubscribe();
+  }, []);
+
   const audioRef = useRef(new Audio('https://assets.mixkit.co/active_storage/sfx/2847/2847-preview.mp3'));
 
   const pendingOrders = orders.filter(o => o.status === 'pending' || o.status === 'preparing');
@@ -68,6 +78,7 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
       return stripped === '' ? '0' : stripped;
     };
 
+    // ──────────────── MODO NORMAL DE OPERAÇÃO (Setores / Cozinha) ────────────────
     // Se for entrada via QR Code, tentamos extrair ficha e itens usando delimitadores para autoinserção
     if (source === 'qr') {
       const separators = ['|', ';', ':'];
@@ -137,11 +148,6 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
 
     const ficha = await firebaseService.resolveFicha(cleaned);
     const normFicha = normalize(ficha);
-    
-    // Armazena se a origem for QR Code
-    if (source === 'qr') {
-      setLastScannedQrFicha(normFicha);
-    }
 
     const order = ordersRef.current.find(
       o => normalize(String(o.ticket_number)) === normFicha && o.status !== 'delivered'
@@ -149,27 +155,53 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
 
     if (order) {
       setAlertMessage(null);
+      // Armazena e exibe o painel de detalhes apenas se houver um pedido ativo
+      if (source === 'qr') {
+        setLastScannedQrFicha(normFicha);
+      }
+
       if (source === 'qr') {
         if (order.status === 'pending' || order.status === 'preparing') {
           await firebaseService.updateOrderStatus(order.id, 'ready');
-          new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3').play().catch(() => {});
+          new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3').play().catch(() => {});
         } else if (order.status === 'ready') {
-          await firebaseService.updateOrderStatus(order.id, 'delivered');
-          new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3').play().catch(() => {});
+          setAlertMessage(`Ficha #${ficha} já está PRONTA! Use o teclado para dar saída.`);
+          new Audio('https://assets.mixkit.co/active_storage/sfx/2847/2847-preview.mp3').play().catch(() => {});
+          setTimeout(() => setAlertMessage(prev => (prev?.includes(`#${ficha}`) ? null : prev)), 4000);
         }
       } else {
-        // Teclado (manual): apenas Saída ou Zerar Ficha (ambos resultam em entregue/zerado)
-        await firebaseService.updateOrderStatus(order.id, 'delivered');
-        new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3').play().catch(() => {});
+        // Teclado (manual)
+        if (order.status === 'pending' || order.status === 'preparing') {
+          // Vai para status PRONTO
+          await firebaseService.updateOrderStatus(order.id, 'ready');
+          new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3').play().catch(() => {});
+        } else if (order.status === 'ready') {
+          // Vai para status ENTREGUE / ZERADO (Some/Limpa a ficha)
+          await firebaseService.updateOrderStatus(order.id, 'delivered');
+          new Audio('https://assets.mixkit.co/active_storage/sfx/2567/2567-preview.mp3').play().catch(() => {});
+          if (lastScannedQrFicha === normFicha) {
+            setLastScannedQrFicha(null);
+          }
+        }
       }
     } else {
+      // Se não há pedido ativo para esta ficha, garantimos que o painel de detalhes não se abra de forma confusa
+      if (source === 'qr') {
+        setLastScannedQrFicha(null);
+      }
       setAlertMessage(`Ficha #${ficha} sem pedido ativo.`);
       new Audio('https://assets.mixkit.co/active_storage/sfx/2847/2847-preview.mp3').play().catch(() => {});
       setTimeout(() => setAlertMessage(prev => (prev?.includes(`#${ficha}`) ? null : prev)), 3000);
     }
 
     if (source === 'manual') setManualInput('');
-  }, []);
+  }, [lastScannedQrFicha]);
+
+  // ── Ref para manter processCode estável na escuta global sem re-registrar listeners ──
+  const processCodeRef = useRef(processCode);
+  useEffect(() => {
+    processCodeRef.current = processCode;
+  }, [processCode]);
 
   // ── Buffer invisível para captura do QR Code (Leitor de Código de Barras / QR Code) ──
   const scanBuffer = useRef('');
@@ -190,14 +222,14 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
 
       const currentTime = Date.now();
       
-      // Se o intervalo for > 100ms, assumimos nova leitura do scanner
-      if (currentTime - qrLastKeyTime.current > 100) {
+      // Se o intervalo for > 200ms, assumimos nova leitura do scanner (mais tolerante a oscilações e main thread)
+      if (currentTime - qrLastKeyTime.current > 200) {
         scanBuffer.current = e.key.length === 1 ? e.key : '';
       } else {
         if (e.key === 'Enter') {
           const code = scanBuffer.current.trim();
           if (code) {
-            processCode(code, 'qr');
+            processCodeRef.current(code, 'qr');
           }
           scanBuffer.current = '';
         } else if (e.key.length === 1) {
@@ -212,7 +244,7 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
     return () => {
       window.removeEventListener('keydown', onKeyDown, { capture: true });
     };
-  }, [processCode]);
+  }, []);
 
   // ── Submit do form manual ──────────────────────────────────────────────────
   const handleManualSubmit = (e: React.FormEvent) => {
@@ -276,9 +308,9 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="p-4 flex justify-between items-center bg-white border-b border-black/5 shadow-sm z-10">
-        <div className="flex items-center gap-8">
+        <div className="flex items-center gap-6">
           <div>
-            <h1 className="text-3xl font-serif italic text-[#5A5A40]">Monitor de Produção</h1>
+            <h1 className="text-2xl xl:text-3xl font-serif italic text-[#5A5A40]">Monitor de Produção</h1>
             <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Consolidado por Setor</p>
           </div>
 
@@ -340,8 +372,8 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
               </div>
             </div>
 
-            <p className="text-[10px] font-bold text-gray-400 uppercase w-32 leading-tight hidden xl:block">
-              Entrada: QR Code • Teclado: Saída / Zerar Ficha
+            <p className="text-[10px] font-bold text-gray-400 uppercase w-48 leading-tight hidden xl:block">
+              Leitor: Fichar Pronto • Teclado: Dar Saída / Zerar
             </p>
           </form>
         </div>
@@ -418,39 +450,94 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
         })}
       </div>
 
-      {/* ── Painel de Ficha QR no Canto Inferior Direito ──────────────────── */}
+      {/* ── Painel de Ficha QR / Modo Recepção no Canto Inferior Direito ── */}
       <AnimatePresence>
-        {lastScannedQrFicha && (
+        {/* RASCUNHO EM TEMPO REAL DA RECEPÇÃO */}
+        {activeReceptionDraft && activeReceptionDraft.ticket_number && (
           <motion.div
-            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            initial={{ opacity: 0, y: 30, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="fixed bottom-6 right-6 w-96 bg-white rounded-[24px] shadow-2xl border-4 border-[#5A5A40] z-50 overflow-hidden flex flex-col max-h-[380px]"
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+            className="fixed bottom-4 right-4 w-72 bg-white rounded-[16px] shadow-xl border-2 border-orange-500 z-50 overflow-hidden flex flex-col max-h-[280px]"
+          >
+            {/* Header */}
+            <div className="bg-orange-500 text-white px-3.5 py-2.5 flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-4 h-4 text-white animate-pulse" />
+                <div>
+                  <h3 className="font-extrabold text-sm tracking-tight leading-none">Ficha #{activeReceptionDraft.ticket_number}</h3>
+                  <p className="text-[8px] text-white/90 uppercase font-bold tracking-wider mt-0.5 font-sans">Sendo Lançada na Recepção...</p>
+                </div>
+              </div>
+              <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
+            </div>
+
+            {/* Content: Draft Items list or placeholder to scan products */}
+            <div className="p-2.5 overflow-y-auto flex-1 space-y-2 bg-[#F5F5F0]/30 min-h-[100px]">
+              {activeReceptionDraft.items && activeReceptionDraft.items.length > 0 ? (
+                <div className="space-y-1 font-sans">
+                  <div className="text-[8px] font-black text-gray-400 uppercase tracking-widest pb-1 mb-1 border-b border-black/5">Produtos Sendo Bipados:</div>
+                  {activeReceptionDraft.items.map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-1.5 bg-white rounded-lg shadow-sm border border-black/5">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="w-5 h-5 bg-orange-100 text-orange-700 rounded flex items-center justify-center font-black text-[10px] shrink-0">
+                          {item.quantity}x
+                        </span>
+                        <span className="font-bold text-xs text-[#1A1A1A] truncate">{item.name}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-6 text-center text-gray-400 italic flex flex-col items-center justify-center gap-1.5 h-full">
+                  <QrCode className="w-6 h-6 text-orange-400 opacity-60 animate-bounce" />
+                  <div>
+                    <p className="font-extrabold text-[#1A1A1A] text-xs not-italic uppercase mb-0.5 font-sans">Ficha Bipada</p>
+                    <p className="text-[10px] text-gray-500 font-sans">Aguardando produtos na recepção...</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="bg-gray-50 border-t border-black/5 p-2 text-center text-[8px] font-bold text-[#5A5A40] uppercase tracking-wider shrink-0 font-sans">
+              Recepção em Tempo Real
+            </div>
+          </motion.div>
+        )}
+
+        {/* MODO NORMAL: PAINEL DE FICHA QR DETALHES */}
+        {!activeReceptionDraft && lastScannedQrFicha && (
+          <motion.div
+            initial={{ opacity: 0, y: 30, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+            className="fixed bottom-4 right-4 w-72 bg-white rounded-[16px] shadow-xl border-2 border-[#5A5A40] z-50 overflow-hidden flex flex-col max-h-[280px]"
           >
             {/* Header do Painel */}
-            <div className="bg-[#5A5A40] text-white px-5 py-4 flex justify-between items-center shrink-0">
+            <div className="bg-[#5A5A40] text-white px-3.5 py-2.5 flex justify-between items-center shrink-0">
               <div className="flex items-center gap-2">
-                <QrCode className="w-5 h-5 text-orange-400" />
+                <QrCode className="w-4 h-4 text-orange-400" />
                 <div>
-                  <h3 className="font-black text-lg tracking-tight leading-none">Ficha #{lastScannedQrFicha}</h3>
-                  <p className="text-[10px] text-white/70 uppercase font-bold tracking-wider mt-0.5">QR Code Bipado</p>
+                  <h3 className="font-extrabold text-sm tracking-tight leading-none">Ficha #{lastScannedQrFicha}</h3>
+                  <p className="text-[8px] text-white/70 uppercase font-bold tracking-wider mt-0.5">QR Code Bipado</p>
                 </div>
               </div>
               <button
                 onClick={() => setLastScannedQrFicha(null)}
-                className="w-8 h-8 bg-white/10 hover:bg-white/20 active:scale-95 text-white flex items-center justify-center rounded-full transition-all text-sm font-bold"
+                className="w-6 h-6 bg-white/10 hover:bg-white/20 active:scale-95 text-white flex items-center justify-center rounded-full transition-all text-xs font-bold"
               >
                 ✕
               </button>
             </div>
 
             {/* Conteúdo - Lista de Produtos */}
-            <div className="p-4 overflow-y-auto flex-1 space-y-3 bg-[#F5F5F0]/30 min-h-[150px]">
+            <div className="p-2.5 overflow-y-auto flex-1 space-y-2 bg-[#F5F5F0]/30 min-h-[105px]">
               {scannedOrder ? (
                 <>
-                  <div className="flex justify-between items-center border-b border-black/5 pb-2 mb-2">
-                    <span className="text-[10px] font-black text-gray-400 uppercase">Status:</span>
-                    <span className={`text-[10px] uppercase font-extrabold px-2.5 py-0.5 rounded-full ${
+                  <div className="flex justify-between items-center border-b border-black/5 pb-1.5 mb-1.5">
+                    <span className="text-[8px] font-black text-gray-400 uppercase">Status:</span>
+                    <span className={`text-[8px] uppercase font-extrabold px-2 py-0.5 rounded-full ${
                       scannedOrder.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
                       scannedOrder.status === 'preparing' ? 'bg-orange-100 text-orange-850' :
                       scannedOrder.status === 'ready' ? 'bg-green-100 text-green-800 animate-pulse' :
@@ -463,16 +550,16 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
                     </span>
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     {scannedOrder.items.map((item: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between p-2 bg-white rounded-xl shadow-sm border border-black/5">
-                        <div className="flex items-center gap-2 truncate">
-                          <span className="w-6 h-6 bg-[#5A5A40]/10 text-[#5A5A40] rounded-lg flex items-center justify-center font-black text-xs shrink-0">
+                      <div key={idx} className="flex items-center justify-between p-1.5 bg-white rounded-lg shadow-sm border border-black/5">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <span className="w-5 h-5 bg-[#5A5A40]/10 text-[#5A5A40] rounded flex items-center justify-center font-black text-[10px] shrink-0">
                             {item.quantity}x
                           </span>
-                          <span className="font-bold text-sm text-[#1A1A1A] truncate">{item.name}</span>
+                          <span className="font-bold text-xs text-[#1A1A1A] truncate">{item.name}</span>
                         </div>
-                        <span className="text-[9px] font-black uppercase text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded shrink-0">
+                        <span className="text-[7px] font-black uppercase text-gray-400 bg-gray-50 px-1 py-0.5 rounded shrink-0">
                           {item.sector || 'Geral'}
                         </span>
                       </div>
@@ -480,18 +567,18 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
                   </div>
                 </>
               ) : (
-                <div className="py-8 text-center text-gray-400 italic flex flex-col items-center justify-center gap-2 h-full">
-                  <AlertCircle className="w-10 h-10 text-orange-400 opacity-60 animate-bounce" />
+                <div className="py-6 text-center text-gray-400 italic flex flex-col items-center justify-center gap-1.5 h-full">
+                  <AlertCircle className="w-6 h-6 text-orange-400 opacity-60 animate-bounce" />
                   <div>
-                    <p className="font-extrabold text-[#1A1A1A] text-sm not-italic uppercase mb-0.5">Sem Pedido Ativo</p>
-                    <p className="text-xs">Ficha aguardando lançamento ou já entregue totalmente.</p>
+                    <p className="font-extrabold text-[#1A1A1A] text-xs not-italic uppercase mb-0.5">Sem Pedido Ativo</p>
+                    <p className="text-[10px] text-gray-500">Aguardando lançamento ou já entregue.</p>
                   </div>
                 </div>
               )}
             </div>
 
             {/* Ações rápidas */}
-            <div className="bg-gray-50 border-t border-black/5 p-3 flex gap-2 shrink-0">
+            <div className="bg-gray-50 border-t border-black/5 p-2 flex gap-1.5 shrink-0">
               {scannedOrder ? (
                 <>
                   {scannedOrder.status !== 'delivered' && (
@@ -499,9 +586,9 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
                       type="button"
                       onClick={async () => {
                         await firebaseService.updateOrderStatus(scannedOrder.id, 'delivered');
-                        new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3').play().catch(() => {});
+                        new Audio('https://assets.mixkit.co/active_storage/sfx/2567/2567-preview.mp3').play().catch(() => {});
                       }}
-                      className="flex-1 py-2 bg-green-600 hover:bg-green-700 active:scale-95 text-white text-xs font-black uppercase rounded-xl transition-all shadow-md"
+                      className="flex-1 py-1.5 bg-green-600 hover:bg-green-700 active:scale-95 text-white text-[10px] font-black uppercase rounded-lg transition-all shadow-md"
                     >
                       ✓ Dar Saída / Zerar
                     </button>
@@ -511,9 +598,9 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
                       type="button"
                       onClick={async () => {
                         await firebaseService.updateOrderStatus(scannedOrder.id, 'ready');
-                        new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3').play().catch(() => {});
+                        new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3').play().catch(() => {});
                       }}
-                      className="flex-1 py-2 bg-[#5A5A40] hover:bg-[#4A4A30] active:scale-95 text-white text-xs font-black uppercase rounded-xl transition-all shadow-md"
+                      className="flex-1 py-1.5 bg-[#5A5A40] hover:bg-[#4A4A30] active:scale-95 text-white text-[10px] font-black uppercase rounded-lg transition-all shadow-md"
                     >
                       Pronto
                     </button>
@@ -523,7 +610,7 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
                 <button
                   type="button"
                   onClick={() => setLastScannedQrFicha(null)}
-                  className="flex-1 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-bold uppercase rounded-xl transition-all"
+                  className="flex-1 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 text-[10px] font-bold uppercase rounded-lg transition-all"
                 >
                   Fechar Painel
                 </button>

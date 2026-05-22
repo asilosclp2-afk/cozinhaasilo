@@ -63,6 +63,19 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
     selectedItemsRef.current = selectedItems;
   }, [ticketNumber, selectedItems]);
 
+  useEffect(() => {
+    if (ticketNumber) {
+      const timer = setTimeout(() => {
+        firebaseService.updateActiveReceptionDraft(ticketNumber, selectedItems)
+          .catch(err => console.error("Erro ao atualizar rascunho em tempo real:", err));
+      }, 150);
+      return () => clearTimeout(timer);
+    } else {
+      firebaseService.clearActiveReceptionDraft()
+        .catch(err => console.error("Erro ao limpar rascunho em tempo real:", err));
+    }
+  }, [ticketNumber, selectedItems]);
+
   // Handle Automatic Submission after 15 seconds of idle time
   const submitOrder = async (tNumber: string, items: { name: string; quantity: number }[]) => {
     if (isSubmitting) return false;

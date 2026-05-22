@@ -84,6 +84,26 @@
         "created_at": { "type": "string", "format": "date-time" }
       },
       "required": ["code", "created_at"]
+    },
+    "ReceptionDraft": {
+      "title": "ReceptionDraft",
+      "description": "Active real-time reception scan draft",
+      "type": "object",
+      "properties": {
+        "ticket_number": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "quantity": { "type": "number" }
+            }
+          }
+        },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ticket_number", "items", "updated_at"]
     }
   },
   "firestore": {
@@ -110,6 +130,10 @@
     "/extra_fichas/{fichaId}": {
       "schema": "ExtraFicha",
       "description": "Collection of registered extra tickets"
+    },
+    "/reception_drafts/{draftId}": {
+      "schema": "ReceptionDraft",
+      "description": "Collection of active reception scanner drafts"
     }
   }
 }

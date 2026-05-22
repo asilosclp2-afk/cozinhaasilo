@@ -803,5 +803,45 @@ export const firebaseService = {
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, COLLECTIONS.EXTRA_FICHAS);
     }
+  },
+
+  // --- RECEPTION DRAFTS ---
+  async updateActiveReceptionDraft(ticketNumber: string, items: { name: string; quantity: number }[]): Promise<void> {
+    try {
+      const docRef = doc(db, 'reception_drafts', 'current');
+      await setDoc(docRef, {
+        ticket_number: String(ticketNumber),
+        items,
+        updated_at: serverTimestamp()
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'reception_drafts/current');
+    }
+  },
+
+  async clearActiveReceptionDraft(): Promise<void> {
+    try {
+      const docRef = doc(db, 'reception_drafts', 'current');
+      await deleteDoc(docRef);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'reception_drafts/current');
+    }
+  },
+
+  listenToActiveReceptionDraft(callback: (draft: { ticket_number: string; items: { name: string; quantity: number }[] } | null) => void) {
+    const docRef = doc(db, 'reception_drafts', 'current');
+    return onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        callback({
+          ticket_number: data.ticket_number || '',
+          items: data.items || [],
+        });
+      } else {
+        callback(null);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'reception_drafts/current');
+    });
   }
 };

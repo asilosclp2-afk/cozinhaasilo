@@ -153,7 +153,7 @@ export function KitchenScanner() {
             setStagedItems([]);
             stagedItemsRef.current = [];
             try {
-              new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3').play().catch(() => {});
+              new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3').play().catch(() => {});
             } catch (e) {}
           } else if (existingOrder.status === 'ready') {
             await firebaseService.updateOrderStatus(existingOrder.id, 'delivered');
