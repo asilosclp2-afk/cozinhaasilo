@@ -4,6 +4,7 @@ import { Clock, CheckCircle2, Play, ChefHat, AlertCircle } from 'lucide-react';
 import { Order } from '../types';
 import OrderTimer from '../components/OrderTimer';
 import { firebaseService } from '../services/firebaseService';
+import { audioService } from '../services/audioService';
 
 export default function Kitchen({ orders }: { orders: Order[] }) {
   const [, setTick] = useState(0);
@@ -83,21 +84,11 @@ export default function Kitchen({ orders }: { orders: Order[] }) {
       if (order.status === 'pending' || order.status === 'preparing') {
         console.log('Kitchen: Marking order as READY:', order.id);
         updateStatus(order.id, 'ready');
-        // Play success sound
-        try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3');
-          audio.volume = 1.0; // Max volume for kitchen loudness
-          audio.play().catch(() => {});
-        } catch (e) {}
+        audioService.playExternalReadySound();
       } else if (order.status === 'ready') {
         console.log('Kitchen: Marking order as DELIVERED (removing from display):', order.id);
         updateStatus(order.id, 'delivered');
-        // Play a different sound or the same one for delivery
-        try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3');
-          audio.volume = 1.0; // Max volume for kitchen loudness
-          audio.play().catch(() => {});
-        } catch (e) {}
+        audioService.playKitchenSuccessDelivered();
       }
     } else {
       console.warn('Kitchen: No active order found for ticket:', cleaned);

@@ -4,6 +4,7 @@ import { Scanner } from '@yudiel/react-qr-scanner';
 import { firebaseService } from '../services/firebaseService';
 import * as pdfjsLib from 'pdfjs-dist';
 import { BrowserQRCodeReader } from '@zxing/library';
+import { audioService } from '../services/audioService';
 
 // Instala o worker do PDF.js
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -40,12 +41,7 @@ export function KitchenScanner() {
       })));
       
       setScanStatus(`ENVIADO PARA COZINHA: FICHA #${ficha}`);
-      // Play success sound
-      try {
-        const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3');
-        audio.volume = 0.5;
-        audio.play().catch(() => {});
-      } catch (e) {}
+      audioService.playInternalOrderSound();
     } catch (err: any) {
       console.error("Failed to submit order:", err);
       setScanStatus(`ERRO: ${err.message || 'Falha ao enviar'}`);
@@ -160,11 +156,7 @@ export function KitchenScanner() {
             activeFichaRef.current = null;
             setStagedItems([]);
             stagedItemsRef.current = [];
-            try {
-              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3');
-              audio.volume = 1.0;
-              audio.play().catch(() => {});
-            } catch (e) {}
+            audioService.playExternalReadySound();
           } else if (existingOrder.status === 'ready') {
             await firebaseService.updateOrderStatus(existingOrder.id, 'delivered');
             setScanStatus(`FICHA #${ficha} LIBERADA!`);
@@ -172,11 +164,7 @@ export function KitchenScanner() {
             activeFichaRef.current = null;
             setStagedItems([]);
             stagedItemsRef.current = [];
-            try {
-              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3');
-              audio.volume = 1.0;
-              audio.play().catch(() => {});
-            } catch (e) {}
+            audioService.playKitchenSuccessDelivered();
           }
         } else {
           setActiveFicha(ficha);

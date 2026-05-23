@@ -3,18 +3,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Truck, QrCode, Hash, CheckCircle2, AlertCircle, Wifi } from 'lucide-react';
 import { Order } from '../types';
 import { firebaseService } from '../services/firebaseService';
+import { audioService } from '../services/audioService';
 
 export default function DispatchStation({ orders }: { orders: Order[] }) {
   const [scanBuffer, setScanBuffer] = useState<string>('');
   const [lastProcessed, setLastProcessed] = useState<{ ticket: string, status: string, success: boolean } | null>(null);
   const lastKeyTime = useRef<number>(0);
   
-  // Sounds
-  const successReady = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3'); // Pronto
-  successReady.volume = 1.0;
-  const successDelivered = new Audio('https://assets.mixkit.co/active_storage/sfx/2567/2567-preview.mp3'); // Entregue
-  const errorSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2572/2572-preview.mp3'); // Erro
-
+  // Connection state
   const [isConnected, setIsConnected] = useState(true); // Firebase handle its own connection mostly
 
   useEffect(() => {
@@ -58,28 +54,31 @@ export default function DispatchStation({ orders }: { orders: Order[] }) {
 
     if (order) {
       let nextStatus: Order['status'] = 'ready';
-      let sound = successReady;
 
       if (order.status === 'ready') {
         nextStatus = 'delivered';
-        sound = successDelivered;
       }
 
       try {
         await firebaseService.updateOrderStatus(order.id, nextStatus);
         
-        sound.play().catch(() => {});
+        if (nextStatus === 'ready') {
+          audioService.playExternalReadySound();
+        } else {
+          audioService.playKitchenSuccessDelivered();
+        }
+
         setLastProcessed({ 
           ticket: order.ticket_number, 
           status: nextStatus === 'ready' ? 'PARA O PAINEL (PRONTO)' : 'ENTREGUE (SAIU DO PAINEL)', 
           success: true 
         });
       } catch (err) {
-        errorSound.play().catch(() => {});
+        audioService.playKitchenError();
         setLastProcessed({ ticket: cleaned, status: 'ERRO NO SISTEMA', success: false });
       }
     } else {
-      errorSound.play().catch(() => {});
+      audioService.playKitchenError();
       setLastProcessed({ ticket: cleaned, status: 'FICHA NÃO ENCONTRADA', success: false });
     }
 

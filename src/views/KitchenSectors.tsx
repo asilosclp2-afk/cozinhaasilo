@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Bell, Flame, Utensils, Star, Package } from 'lucide-react';
 import { Order } from '../types';
 import { firebaseService } from '../services/firebaseService';
+import { audioService } from '../services/audioService';
 
 export default function KitchenSectors({ orders }: { orders: Order[] }) {
   const [lastItemCount, setLastItemCount] = useState(0);
@@ -11,9 +12,6 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
   const [manualInput, setManualInput] = useState<string>('');
   const lastKeyTime = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Distinct sound for kitchen (Bubble Pop)
-  const audioRef = useRef(new Audio('https://assets.mixkit.co/active_storage/sfx/2847/2847-preview.mp3'));
 
   const pendingOrders = orders.filter(o => o.status === 'pending' || o.status === 'preparing');
 
@@ -47,19 +45,11 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
       if (order.status === 'pending' || order.status === 'preparing') {
         // Immediate update instead of queue
         updateStatus(order.id, 'ready');
-        try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3');
-          audio.volume = 1.0; // Max volume for kitchen loudness
-          audio.play().catch(() => {});
-        } catch (e) {}
+        audioService.playExternalReadySound();
       } else if (order.status === 'ready') {
         // Second scan (if already ready): mark as delivered (clear ficha)
         updateStatus(order.id, 'delivered');
-        try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3');
-          audio.volume = 1.0; // Max volume for kitchen loudness
-          audio.play().catch(() => {});
-        } catch (e) {}
+        audioService.playKitchenSuccessDelivered();
       }
     } else {
       // If no order found, maybe check if there's any active for this ficha in other statuses
@@ -112,6 +102,21 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
 
   const groupedItems = getGroupedItems();
   const totalPendingItems = groupedItems.reduce((acc, item) => acc + item.quantity, 0);
+
+  // Monitor when new items enter the production screen to trigger the internal arrival sound
+  useEffect(() => {
+    if (totalPendingItems > lastItemCount) {
+      if (lastItemCount > 0) {
+        audioService.playInternalOrderSound();
+        setShowNotification(true);
+        const timer = setTimeout(() => {
+          setShowNotification(false);
+        }, 5000);
+        return () => clearTimeout(timer);
+      }
+    }
+    setLastItemCount(totalPendingItems);
+  }, [totalPendingItems, lastItemCount]);
 
   const sectors = [
     { id: 'Fritadeira', label: 'Fritadeira', icon: <Flame className="w-6 h-6 text-orange-500" />, color: 'border-orange-500', bg: 'bg-orange-50/30' },
