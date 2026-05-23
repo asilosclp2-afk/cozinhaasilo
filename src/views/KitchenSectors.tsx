@@ -48,7 +48,7 @@ export default function KitchenSectors({ orders }: { orders: Order[] }) {
         // Immediate update instead of queue
         updateStatus(order.id, 'ready');
         try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
+          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3');
           audio.volume = 1.0; // Max volume for kitchen loudness
           audio.play().catch(() => {});
         } catch (e) {}

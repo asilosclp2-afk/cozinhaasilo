@@ -161,7 +161,7 @@ export function KitchenScanner() {
             setStagedItems([]);
             stagedItemsRef.current = [];
             try {
-              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
+              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3');
               audio.volume = 1.0;
               audio.play().catch(() => {});
             } catch (e) {}

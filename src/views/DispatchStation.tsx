@@ -10,7 +10,8 @@ export default function DispatchStation({ orders }: { orders: Order[] }) {
   const lastKeyTime = useRef<number>(0);
   
   // Sounds
-  const successReady = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3'); // Pronto
+  const successReady = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3'); // Pronto
+  successReady.volume = 1.0;
   const successDelivered = new Audio('https://assets.mixkit.co/active_storage/sfx/2567/2567-preview.mp3'); // Entregue
   const errorSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2572/2572-preview.mp3'); // Erro
 

@@ -291,7 +291,9 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
           setIsTicketLocked(false);
           setScannerMode('ticket');
           try {
-            new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3').play().catch(() => {});
+            const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3');
+            audio.volume = 1.0;
+            audio.play().catch(() => {});
           } catch (e) {}
           return;
         } else if (existingOrder.status === 'ready') {
