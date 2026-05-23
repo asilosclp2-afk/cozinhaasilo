@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, User, Utensils, Shield, Layers, Edit2, X, Key, QrCode as QrCodeIcon, Download, Printer, FileDown, RefreshCw, Camera, Eye } from 'lucide-react';
+import { Plus, Trash2, User, Utensils, Shield, Layers, Edit2, X, Key, QrCode as QrCodeIcon, Download, Printer, FileDown, RefreshCw, Camera, Eye, Volume2, Play } from 'lucide-react';
 import { MenuItem, User as UserType, Category } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
 import { jsPDF } from 'jspdf';
@@ -7,9 +7,10 @@ import html2canvas from 'html2canvas';
 import { Html5Qrcode } from 'html5-qrcode';
 import { motion } from 'motion/react';
 import { firebaseService } from '../services/firebaseService';
+import { audioService, EXTERNAL_ALERTS, INTERNAL_ALERTS } from '../services/audioService';
 
 export default function Admin() {
-  const [activeTab, setActiveTab] = useState<'menu' | 'users' | 'categories' | 'qrcodes'>('menu');
+  const [activeTab, setActiveTab] = useState<'menu' | 'users' | 'categories' | 'qrcodes' | 'sounds'>('menu');
   const qrContainerRef = useRef<HTMLDivElement>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -443,6 +444,17 @@ export default function Admin() {
         >
           <QrCodeIcon className="w-4 h-4" />
           QR Codes
+        </button>
+        <button
+          onClick={() => setActiveTab('sounds')}
+          className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
+            activeTab === 'sounds' 
+              ? 'bg-[#5A5A40] text-white shadow-lg' 
+              : 'bg-white text-gray-400 hover:bg-gray-50'
+          }`}
+        >
+          <Volume2 className="w-4 h-4" />
+          Sons / Alertas
         </button>
       </div>
 
@@ -1159,7 +1171,209 @@ export default function Admin() {
             )}
           </div>
         )}
+
+        {activeTab === 'sounds' && (
+          <SoundSettingsPanel />
+        )}
       </div>
+    </div>
+  );
+}
+
+// -----------------------------------------------------
+// PAINEL DE CONFIGURAÇÃO DE SONS (Sintetizadores e Customizados)
+// -----------------------------------------------------
+
+function SoundSettingsPanel() {
+  const [settings, setSettings] = useState(() => audioService.getSettings());
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const handleSave = () => {
+    audioService.saveSettings(settings);
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 3000);
+  };
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-2xl font-serif italic text-[#5A5A40] mb-2 flex items-center gap-2">
+          <Volume2 className="w-6 h-6 text-[#5A5A40]" />
+          Configuração de Sons e Alertas
+        </h2>
+        <p className="text-sm text-gray-500">
+          Personalize as notificações sonoras do painel do cliente e do sistema interno da cozinha.
+        </p>
+      </div>
+
+      {saveSuccess && (
+        <div className="p-4 bg-emerald-50 text-emerald-700 rounded-2xl text-sm font-semibold border border-emerald-100 flex items-center gap-2">
+          ✓ Configurações salvas e aplicadas com sucesso neste dispositivo!
+        </div>
+      )}
+
+      {/* Caixa de Dica / Ajuda */}
+      <div className="bg-[#5A5A40]/5 border border-[#5A5A40]/10 rounded-3xl p-6 text-sm text-[#5A5A40] space-y-2">
+        <h4 className="font-bold flex items-center gap-1.5 text-base">
+          💡 Biblioteca de Sons e Upload Customizado
+        </h4>
+        <p className="leading-relaxed">
+          O sistema conta com <strong>sintetizadores de áudio nativos do navegador</strong> para garantir máxima compatibilidade e confiabilidade com som limpo e alto, sem depender da internet! A opção do <strong>McDonald's</strong> e da <strong>Campainha Ding-Dong</strong> usam essa tecnologia.
+        </p>
+        <p className="leading-relaxed">
+          <strong>Quer usar um som totalmente seu?</strong> Você pode colar o link direto de qualquer arquivo .mp3 na internet no campo "URL de Som Customizado" ou nos enviar o arquivo de áudio pela conversa aqui do chat para que possamos salvar no sistema para você usar!
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        
+        {/* Alerta Externo (Painel de Chamada de Cliente) */}
+        <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-yellow-400 rounded-xl flex items-center justify-center">
+                <Volume2 className="w-5 h-5 text-black" />
+              </div>
+              <div>
+                <h3 className="font-black text-gray-800 text-lg">Alerta Externo (Painel/TV)</h3>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Aviso de Pedido Pronto</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Modelo de Som</label>
+                <select
+                  value={settings.extId}
+                  onChange={e => setSettings(prev => ({ ...prev, extId: e.target.value }))}
+                  className="w-full p-4 bg-white rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#5A5A40] text-sm"
+                >
+                  {EXTERNAL_ALERTS.map(opt => (
+                    <option key={opt.id} value={opt.id}>{opt.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {settings.extId === 'custom' && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">URL de Som Customizado (.mp3)</label>
+                  <input
+                    type="text"
+                    value={settings.extUrl}
+                    onChange={e => setSettings(prev => ({ ...prev, extUrl: e.target.value }))}
+                    placeholder="https://exemplo.com/meu-som.mp3"
+                    className="w-full p-4 bg-white rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#5A5A40] text-sm font-mono text-gray-600"
+                  />
+                </div>
+              )}
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-bold text-gray-400 uppercase">Volume: {Math.round(settings.extVol * 100)}%</label>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1.5"
+                  step="0.05"
+                  value={settings.extVol}
+                  onChange={e => setSettings(prev => ({ ...prev, extVol: Number(e.target.value) }))}
+                  className="w-full accent-[#5A5A40] cursor-pointer"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-8 pt-4 border-t border-gray-200/60 flex gap-3">
+            <button
+              onClick={() => audioService.testSound(settings.extId, true, settings.extUrl, settings.extVol)}
+              className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-500 text-black rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all text-sm shadow-md animate-gradient"
+            >
+              <Play className="w-4 h-4 fill-current" />
+              Testar Som Externo
+            </button>
+          </div>
+        </div>
+
+        {/* Alerta Interno (Entrada de Produtos na Cozinha) */}
+        <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-[#5A5A40]/10 rounded-xl flex items-center justify-center">
+                <Volume2 className="w-5 h-5 text-[#5A5A40]" />
+              </div>
+              <div>
+                <h3 className="font-black text-gray-800 text-lg">Alerta Interno (Entrada)</h3>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Aviso de Novo Pedido / Produto</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Modelo de Som</label>
+                <select
+                  value={settings.intId}
+                  onChange={e => setSettings(prev => ({ ...prev, intId: e.target.value }))}
+                  className="w-full p-4 bg-white rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#5A5A40] text-sm"
+                >
+                  {INTERNAL_ALERTS.map(opt => (
+                    <option key={opt.id} value={opt.id}>{opt.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {settings.intId === 'custom' && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">URL de Som Customizado (.mp3)</label>
+                  <input
+                    type="text"
+                    value={settings.intUrl}
+                    onChange={e => setSettings(prev => ({ ...prev, intUrl: e.target.value }))}
+                    placeholder="https://exemplo.com/meu-som-interno.mp3"
+                    className="w-full p-4 bg-white rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#5A5A40] text-sm font-mono text-gray-600"
+                  />
+                </div>
+              )}
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-bold text-gray-400 uppercase">Volume: {Math.round(settings.intVol * 100)}%</label>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1.5"
+                  step="0.05"
+                  value={settings.intVol}
+                  onChange={e => setSettings(prev => ({ ...prev, intVol: Number(e.target.value) }))}
+                  className="w-full accent-[#5A5A40] cursor-pointer"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-8 pt-4 border-t border-gray-200/60 flex gap-3">
+            <button
+              onClick={() => audioService.testSound(settings.intId, false, settings.intUrl, settings.intVol)}
+              className="flex-1 py-3 bg-[#5A5A40] hover:bg-[#4D4D36] text-white rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all text-sm shadow-md"
+            >
+              <Play className="w-4 h-4 fill-current" />
+              Testar Som Interno
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <div className="pt-6 border-t border-gray-100 flex justify-end gap-3">
+        <button
+          onClick={handleSave}
+          className="px-8 py-4 bg-[#151619] hover:bg-black text-white rounded-2xl font-black text-base shadow-lg hover:shadow-xl transition-all w-full md:w-auto"
+        >
+          Salvar Configurações de Som
+        </button>
+      </div>
+
     </div>
   );
 }

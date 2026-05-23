@@ -17,6 +17,7 @@ import {
   Layers
 } from 'lucide-react';
 import { firebaseService } from './services/firebaseService';
+import { audioService } from './services/audioService';
 import { Order, User } from './types';
 import Reception from './views/Reception';
 import Kitchen from './views/Kitchen';
@@ -63,7 +64,6 @@ export default function App() {
   }, []);
 
   const currentViewRef = useRef(currentView);
-  const audioRef = useRef(new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3'));
   const ordersCountRef = useRef(0);
 
   useEffect(() => {
@@ -104,9 +104,7 @@ export default function App() {
       // Play a loud counter bell when a new order appears in any of the kitchen or display views
       if (prevCount > 0 && newOrders.length > prevCount) {
         if (['kitchen', 'display', 'kitchen-sectors', 'kitchen-scanner'].includes(currentViewRef.current)) {
-          audioRef.current.currentTime = 0;
-          audioRef.current.volume = 1.0; // Max volume for loud kitchen sound
-          audioRef.current.play().catch(e => console.log('Audio play failed:', e));
+          audioService.playInternalOrderSound();
         }
       }
       setIsInitializing(false);

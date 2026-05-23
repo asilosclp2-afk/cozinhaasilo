@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Order } from '../types';
 import { ArrowLeft, ChefHat, Utensils, Flame, Sparkles, BellRing } from 'lucide-react';
 import OrderTimer from '../components/OrderTimer';
+import { audioService } from '../services/audioService';
 
 const CAIPIRA_MESSAGES = [
   "Eita! O trem tá pronto, sô!",
@@ -53,7 +54,6 @@ export default function Display({ orders, onBack }: { orders: Order[], onBack: (
   const [notifOrder, setNotifOrder] = useState<Order | null>(null);
   const [currentMessage, setCurrentMessage] = useState('');
   const [queue, setQueue] = useState<Order[]>([]);
-  const announcementAudio = useRef(new Audio('https://assets.mixkit.co/active_storage/sfx/2216/2216-preview.mp3'));
 
   // Add new ready orders to the queue
   useEffect(() => {
@@ -74,7 +74,7 @@ export default function Display({ orders, onBack }: { orders: Order[], onBack: (
       setShowNotification(true);
       
       // Play external announcement sound
-      announcementAudio.current.play().catch(e => console.log('Audio play failed:', e));
+      audioService.playExternalReadySound();
       
       setQueue(prev => prev.slice(1));
     }
