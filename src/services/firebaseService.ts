@@ -686,7 +686,7 @@ export const firebaseService = {
     // 1. Check for standard Ticket/Ficha keyword formats
     const fichaMatch = cleaned.match(/^ficha[- ]?(\d+)$/i);
     if (fichaMatch) {
-      const val = parseInt(fichaMatch[1], 10);
+      const val = parseInt(fichaMatch[1].substring(0, 3), 10);
       return { type: 'ticket', value: String(val) };
     }
 
@@ -696,7 +696,7 @@ export const firebaseService = {
       normalized = normalized.substring(3);
     }
 
-    // 3. Match the first 4 consecutive digits (since we want to read the 4 numbers of the QR code)
+    // 3. Match the first 4 consecutive digits (to support product categorization)
     const match4 = normalized.match(/(\d{4})/);
     if (match4) {
       const value4 = match4[1];
@@ -704,28 +704,25 @@ export const firebaseService = {
       if (numericVal >= 800) {
         return { type: 'product', value: value4 };
       } else {
-        return { type: 'ticket', value: String(numericVal) };
+        // Ticket: extract only the first 3 digits of the sequence
+        const first3 = value4.substring(0, 3);
+        const ticketNum = parseInt(first3, 10);
+        return { type: 'ticket', value: String(ticketNum) };
       }
     }
 
-    // 4. Fallback: Check if purely numeric on the normalized code
-    if (/^\d+$/.test(normalized)) {
-      const numericVal = parseInt(normalized, 10);
-      if (numericVal >= 800) {
-        return { type: 'product', value: normalized.padStart(4, '0') };
+    // 4. Fallback: Match any sequence of digits from the normalized code
+    const matchDigits = normalized.match(/(\d+)/);
+    if (matchDigits) {
+      const digits = matchDigits[1];
+      const numericVal = parseInt(digits, 10);
+      if (numericVal >= 800 && digits.length >= 4) {
+        return { type: 'product', value: digits.substring(0, 4) };
       } else {
-        return { type: 'ticket', value: String(numericVal) };
-      }
-    }
-
-    // 5. Fallback: Split by common separators and check first segment
-    const firstPart = normalized.split(/[-/_ ]+/)[0];
-    if (/^\d+$/.test(firstPart)) {
-      const numericVal = parseInt(firstPart, 10);
-      if (numericVal >= 800) {
-        return { type: 'product', value: firstPart.substring(0, 4).padStart(4, '0') };
-      } else {
-        return { type: 'ticket', value: String(numericVal) };
+        // Ticket: extract only the first 3 digits of the sequence
+        const first3 = digits.substring(0, 3);
+        const ticketNum = parseInt(first3, 10);
+        return { type: 'ticket', value: String(ticketNum) };
       }
     }
 
