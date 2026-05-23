@@ -124,8 +124,8 @@ export default function AdminDashboard() {
         {/* Top Items by Revenue Chart */}
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-black/5 flex flex-col">
           <h3 className="text-xl font-bold text-[#1A1A1A] mb-6">Receita por Item</h3>
-          <div className="w-full h-[400px] min-h-[400px] min-w-0">
-            <ResponsiveContainer width="100%" height={400} minWidth={0}>
+          <div className="w-full h-[400px] min-h-[400px]">
+            <ResponsiveContainer width="99%" height="100%">
               <BarChart 
                 data={data.items.sort((a: any, b: any) => b.total - a.total).slice(0, 10)} 
                 layout="vertical" 
@@ -155,8 +155,8 @@ export default function AdminDashboard() {
         {/* Hourly Sales Chart */}
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-black/5 flex flex-col">
           <h3 className="text-xl font-bold text-[#1A1A1A] mb-6">Vendas por Horário</h3>
-          <div className="w-full h-[400px] min-h-[400px] min-w-0">
-            <ResponsiveContainer width="100%" height={400} minWidth={0}>
+          <div className="w-full h-[400px] min-h-[400px]">
+            <ResponsiveContainer width="99%" height="100%">
               <AreaChart data={hourlyData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">

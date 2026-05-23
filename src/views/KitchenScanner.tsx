@@ -92,7 +92,15 @@ export function KitchenScanner() {
 
       // 2. Check if it's a menu item QR code
       const menu = await firebaseService.getMenu();
-      const detectedItem = menu.find(item => item.qr_code === input);
+      const parsedScanned = firebaseService.parseQR(input);
+      const detectedItem = menu.find(item => {
+        if (!item.qr_code) return false;
+        const target = item.qr_code.trim().toLowerCase();
+        if (target === input.trim().toLowerCase()) return true;
+
+        const parsedTarget = firebaseService.parseQR(target);
+        return parsedTarget.value === parsedScanned.value && parsedScanned.type === 'product';
+      });
       
       if (detectedItem) {
         if (!activeFichaRef.current) {
@@ -126,7 +134,7 @@ export function KitchenScanner() {
       // 3. Treat as Ficha Number
       const ficha = await firebaseService.resolveFicha(input);
 
-      if (ficha) {
+      if (ficha && (ficha !== input || /^\d+$/.test(ficha))) {
         
         // SWITCH OR SUBMIT: If scanning same ficha with items OR different ficha with items
         if (stagedItemsRef.current.length > 0 && activeFichaRef.current) {
@@ -153,7 +161,9 @@ export function KitchenScanner() {
             setStagedItems([]);
             stagedItemsRef.current = [];
             try {
-              new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3').play().catch(() => {});
+              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
+              audio.volume = 1.0;
+              audio.play().catch(() => {});
             } catch (e) {}
           } else if (existingOrder.status === 'ready') {
             await firebaseService.updateOrderStatus(existingOrder.id, 'delivered');
@@ -162,6 +172,11 @@ export function KitchenScanner() {
             activeFichaRef.current = null;
             setStagedItems([]);
             stagedItemsRef.current = [];
+            try {
+              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3');
+              audio.volume = 1.0;
+              audio.play().catch(() => {});
+            } catch (e) {}
           }
         } else {
           setActiveFicha(ficha);

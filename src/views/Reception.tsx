@@ -12,6 +12,15 @@ interface ReceptionProps {
   orders: Order[];
 }
 
+const isSameTicket = (t1: string, t2: string) => {
+  const clean1 = String(t1).trim();
+  const clean2 = String(t2).trim();
+  if (clean1 === clean2) return true;
+  const n1 = parseInt(clean1, 10);
+  const n2 = parseInt(clean2, 10);
+  return !isNaN(n1) && !isNaN(n2) && n1 === n2;
+};
+
 export default function Reception({ isAdmin, orders }: ReceptionProps) {
   const [ticketNumber, setTicketNumber] = useState('');
   const [selectedItems, setSelectedItems] = useState<{ name: string; quantity: number }[]>([]);
@@ -37,8 +46,16 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
   const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scanBuffer = useRef<string>('');
   const lastKeyTime = useRef<number>(0);
+  const ticketInputRef = useRef<HTMLInputElement | null>(null);
 
-  const normalizeTicket = (t: string) => String(t).trim().replace(/^0+/, '') || '0';
+  // Auto-focus ticket input when unlocked so the user is ready to scan or type a slot directly
+  useEffect(() => {
+    if (!isTicketLocked && ticketInputRef.current) {
+      setTimeout(() => {
+        ticketInputRef.current?.focus();
+      }, 50);
+    }
+  }, [isTicketLocked]);
 
   useEffect(() => {
     const checkTicket = async () => {
@@ -47,7 +64,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
         return;
       }
       
-      const existing = orders.find(o => normalizeTicket(String(o.ticket_number)) === normalizeTicket(ticketNumber));
+      const existing = orders.find(o => isSameTicket(o.ticket_number, ticketNumber));
       setIsTicketInUse(!!existing);
       if (existing) {
         setScanStatus(`AVISO: Ficha #${ticketNumber} está em uso (${existing.status})`);
@@ -61,19 +78,6 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
   useEffect(() => {
     ticketNumberRef.current = ticketNumber;
     selectedItemsRef.current = selectedItems;
-  }, [ticketNumber, selectedItems]);
-
-  useEffect(() => {
-    if (ticketNumber) {
-      const timer = setTimeout(() => {
-        firebaseService.updateActiveReceptionDraft(ticketNumber, selectedItems)
-          .catch(err => console.error("Erro ao atualizar rascunho em tempo real:", err));
-      }, 150);
-      return () => clearTimeout(timer);
-    } else {
-      firebaseService.clearActiveReceptionDraft()
-        .catch(err => console.error("Erro ao limpar rascunho em tempo real:", err));
-    }
   }, [ticketNumber, selectedItems]);
 
   // Handle Automatic Submission after 15 seconds of idle time
@@ -147,29 +151,35 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
     if (!isKeyboardScannerEnabled) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in any input or textarea
+      // Ignore if user is typing in any non-readonly input or textarea
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+      if (
+        (target.tagName === 'INPUT' && !(target as HTMLInputElement).readOnly) ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
 
       const currentTime = Date.now();
       
       // If more than 100ms passed, it's likely a new scan or manual typing
       // Increased to 100ms for more tolerance
       if (currentTime - lastKeyTime.current > 100) {
-        scanBuffer.current = e.key.length === 1 ? e.key : '';
-      } else {
-        if (e.key === 'Enter') {
-          const code = scanBuffer.current.trim();
-          if (code) {
-            processScannedCode(code);
-          }
-          scanBuffer.current = '';
-        } else if (e.key.length === 1) {
-          scanBuffer.current += e.key;
-        }
+        scanBuffer.current = '';
       }
       
       lastKeyTime.current = currentTime;
+
+      if (e.key === 'Enter') {
+        const code = scanBuffer.current.trim();
+        if (code) {
+          processScannedCode(code);
+        }
+        scanBuffer.current = '';
+      } else if (e.key.length === 1) {
+        scanBuffer.current += e.key;
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -232,10 +242,14 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
     } catch (e) {}
 
     // 2. Is it a product?
+    const parsedScanned = firebaseService.parseQR(cleanedCode);
     const product = menuItems.find(item => {
       if (!item.qr_code) return false;
-      const targetQr = item.qr_code.trim();
-      return cleanedCode === targetQr || cleanedCode.startsWith(targetQr) || String(item.id) === cleanedCode;
+      const target = item.qr_code.trim().toLowerCase();
+      if (target === cleanedCode.toLowerCase()) return true;
+
+      const parsedTarget = firebaseService.parseQR(target);
+      return parsedTarget.value === parsedScanned.value && parsedScanned.type === 'product';
     });
     
     if (product) {
@@ -252,7 +266,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
     // 3. Is it a ticket number? (Numeric or FICHA-X, or Extra Ficha)
     const ficha = await firebaseService.resolveFicha(cleanedCode);
     
-    if (ficha) {
+    if (ficha && (ficha !== cleanedCode || /^\d+$/.test(ficha))) {
 
       // SUBMIT PREVIOUS: If scanning any ficha while we have items staged
       if (selectedItemsRef.current.length > 0 && ticketNumberRef.current) {
@@ -261,10 +275,11 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
         const wasSame = ticketNumberRef.current === ficha;
         setSelectedItems([]);
         setTicketNumber('');
+        setScannerMode('ticket');
         if (wasSame) return; // Stop here if it was a "confirm scan"
       }
 
-      const existingOrder = orders.find(o => normalizeTicket(String(o.ticket_number)) === normalizeTicket(ficha));
+      const existingOrder = orders.find(o => isSameTicket(o.ticket_number, ficha));
       if (existingOrder) {
         if (existingOrder.status === 'pending' || existingOrder.status === 'preparing') {
           // Transition -> READY
@@ -274,6 +289,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
           setTicketNumber('');
           ticketNumberRef.current = '';
           setIsTicketLocked(false);
+          setScannerMode('ticket');
           try {
             new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3').play().catch(() => {});
           } catch (e) {}
@@ -286,6 +302,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
           setTicketNumber('');
           ticketNumberRef.current = '';
           setIsTicketLocked(false);
+          setScannerMode('ticket');
           return;
         } else {
           setScanStatus(`Ficha #${ficha} em uso (${existingOrder.status})`);
@@ -297,6 +314,8 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
       // Default: Start new draft for this ficha
       setTicketNumber(ficha);
       setIsTicketLocked(true);
+      setScannerMode('product');
+      (document.activeElement as HTMLElement)?.blur();
       setScanStatus(`MODO: FICHA #${ficha}`);
       setTimeout(() => setScanStatus(null), 3000);
       return;
@@ -430,7 +449,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
       return;
     }
 
-    const existingOrder = orders.find(o => normalizeTicket(String(o.ticket_number)) === normalizeTicket(ticketNumber));
+    const existingOrder = orders.find(o => isSameTicket(o.ticket_number, ticketNumber));
     if (existingOrder) {
       if (existingOrder.status === 'pending' || existingOrder.status === 'preparing') {
         setScanStatus(`Ficha #${ticketNumber} - Marcando como PRONTO...`);
@@ -447,6 +466,13 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
         setTicketNumber('');
         setIsTicketLocked(false);
       }
+    } else {
+      // If there is no existing order, lock the ticket and go to product scanning mode!
+      setIsTicketLocked(true);
+      setScannerMode('product');
+      (document.activeElement as HTMLElement)?.blur();
+      setScanStatus(`MODO: FICHA #${ticketNumber}`);
+      setTimeout(() => setScanStatus(null), 3000);
     }
   };
 
@@ -877,7 +903,10 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
                   {isTicketLocked && (
                     <button
                       type="button"
-                      onClick={() => setIsTicketLocked(false)}
+                      onClick={() => {
+                        setIsTicketLocked(false);
+                        setScannerMode('ticket');
+                      }}
                       className="text-[10px] font-bold text-red-500 uppercase flex items-center gap-1"
                     >
                       <Lock className="w-3 h-3" />
@@ -887,6 +916,7 @@ export default function Reception({ isAdmin, orders }: ReceptionProps) {
                 </div>
                 <div className="relative">
                   <input
+                    ref={ticketInputRef}
                     type="text"
                     required
                     readOnly={isTicketLocked}

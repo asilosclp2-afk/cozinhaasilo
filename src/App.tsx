@@ -63,7 +63,8 @@ export default function App() {
   }, []);
 
   const currentViewRef = useRef(currentView);
-  const audioRef = useRef(new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'));
+  const audioRef = useRef(new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3'));
+  const ordersCountRef = useRef(0);
 
   useEffect(() => {
     currentViewRef.current = currentView;
@@ -95,13 +96,16 @@ export default function App() {
 
     // Listen to orders in real-time
     const unsubscribe = firebaseService.listenToOrders((newOrders) => {
+      const prevCount = ordersCountRef.current;
+      ordersCountRef.current = newOrders.length;
+
       setOrders(newOrders);
       
-      // Basic sound logic for new orders
-      if (newOrders.length > orders.length) {
-        if (currentViewRef.current === 'kitchen' || currentViewRef.current === 'display') {
+      // Play a loud counter bell when a new order appears in any of the kitchen or display views
+      if (prevCount > 0 && newOrders.length > prevCount) {
+        if (['kitchen', 'display', 'kitchen-sectors', 'kitchen-scanner'].includes(currentViewRef.current)) {
           audioRef.current.currentTime = 0;
-          audioRef.current.volume = 0.5;
+          audioRef.current.volume = 1.0; // Max volume for loud kitchen sound
           audioRef.current.play().catch(e => console.log('Audio play failed:', e));
         }
       }
@@ -188,7 +192,7 @@ export default function App() {
               active={currentView === 'reception'} 
               onClick={() => setCurrentView('reception')}
               icon={<Plus />}
-              label="Recepção"
+              label="Ficha"
             />
           )}
           {allowedViews.includes('kitchen') && (

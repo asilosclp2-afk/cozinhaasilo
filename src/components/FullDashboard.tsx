@@ -109,8 +109,8 @@ export default function FullDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white p-8 rounded-[32px] shadow-sm border border-black/5">
           <h3 className="text-sm font-bold uppercase text-gray-400 mb-6">Fluxo de Pedidos por Hora</h3>
-          <div className="h-[250px] w-full min-w-0">
-            <ResponsiveContainer width="100%" height={250} minWidth={0}>
+          <div className="h-[250px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F0F0F0" />
                 <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} />

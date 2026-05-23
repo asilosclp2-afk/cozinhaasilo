@@ -10,7 +10,7 @@ export default function DispatchStation({ orders }: { orders: Order[] }) {
   const lastKeyTime = useRef<number>(0);
   
   // Sounds
-  const successReady = new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3'); // Pronto
+  const successReady = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3'); // Pronto
   const successDelivered = new Audio('https://assets.mixkit.co/active_storage/sfx/2567/2567-preview.mp3'); // Entregue
   const errorSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2572/2572-preview.mp3'); // Erro
 
@@ -46,11 +46,13 @@ export default function DispatchStation({ orders }: { orders: Order[] }) {
 
     const ficha = await firebaseService.resolveFicha(cleaned);
 
-    const normalizeTicket = (t: string) => String(t).trim().replace(/^0+/, '') || '0';
-
     // Direct search in orders
     const order = orders.find(o => {
-      return normalizeTicket(o.ticket_number) === normalizeTicket(ficha);
+      const ticket = String(o.ticket_number).trim();
+      if (ticket === ficha) return true;
+      const nt = parseInt(ticket, 10);
+      const nf = parseInt(ficha, 10);
+      return !isNaN(nt) && !isNaN(nf) && nt === nf;
     });
 
     if (order) {

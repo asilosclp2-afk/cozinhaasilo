@@ -44,38 +44,6 @@ export default function Admin() {
   const [scanCallback, setScanCallback] = useState<((code: string) => void) | null>(null);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
 
-  const [isSavingFichas, setIsSavingFichas] = useState(false);
-  const [fichasSaveSuccess, setFichasSaveSuccess] = useState<string | null>(null);
-
-  const handleSaveFichasToDatabase = async () => {
-    setIsSavingFichas(true);
-    setFichasSaveSuccess(null);
-    try {
-      const itemsToRegister: { code: string; alias: string }[] = [];
-      const start = Math.max(1, fichasRange.start);
-      const end = Math.max(start, fichasRange.end);
-      
-      for (let num = start; num <= end; num++) {
-        const numStr = num.toString();
-        // Register raw format
-        itemsToRegister.push({ code: numStr, alias: numStr });
-        // Register prefixed hyphenated format
-        itemsToRegister.push({ code: `FICHA-${numStr}`, alias: numStr });
-        // Register prefixed format with space
-        itemsToRegister.push({ code: `FICHA ${numStr}`, alias: numStr });
-      }
-
-      await firebaseService.registerExtraFichasBatch(itemsToRegister);
-      setFichasSaveSuccess(`Sucesso: Fichas do #${start} ao #${end} registradas no banco de dados para sempre!`);
-      setTimeout(() => setFichasSaveSuccess(null), 5000);
-    } catch (err: any) {
-      console.error(err);
-      setError('Erro ao salvar fichas no banco de dados: ' + (err.message || ''));
-    } finally {
-      setIsSavingFichas(false);
-    }
-  };
-
   const startScanning = (onScan: (code: string) => void) => {
     setIsScanning(true);
     setScanCallback(() => onScan);
@@ -132,26 +100,6 @@ export default function Admin() {
     }
     
     setIsGeneratingPdf(true);
-
-    // Automatically save fichas to database on PDF generation for 100% reliable scanner match
-    if (qrType === 'fichas') {
-      try {
-        const itemsToRegister: { code: string; alias: string }[] = [];
-        const start = Math.max(1, fichasRange.start);
-        const end = Math.max(start, fichasRange.end);
-        for (let num = start; num <= end; num++) {
-          const numStr = num.toString();
-          itemsToRegister.push({ code: numStr, alias: numStr });
-          itemsToRegister.push({ code: `FICHA-${numStr}`, alias: numStr });
-          itemsToRegister.push({ code: `FICHA ${numStr}`, alias: numStr });
-        }
-        firebaseService.registerExtraFichasBatch(itemsToRegister).catch(e => {
-          console.error("Error in auto-saving generated QR codes to DB:", e);
-        });
-      } catch (e) {
-        console.error(e);
-      }
-    }
     
     try {
       const pdf = new jsPDF({
@@ -332,12 +280,12 @@ export default function Admin() {
         active: true
       };
 
-      let data;
       if (editingMenuItemId) {
-        data = await firebaseService.updateMenuItem(editingMenuItemId, body);
-        setMenuItems(prev => prev.map(i => String(i.id) === String(editingMenuItemId) ? data : i));
+        await firebaseService.updateMenuItem(editingMenuItemId, body);
+        const updatedItem = { id: editingMenuItemId, ...body } as MenuItem;
+        setMenuItems(prev => prev.map(i => String(i.id) === String(editingMenuItemId) ? updatedItem : i));
       } else {
-        data = await firebaseService.createMenuItem(body);
+        const data = await firebaseService.createMenuItem(body);
         setMenuItems(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
       }
       
@@ -391,12 +339,12 @@ export default function Admin() {
       };
       if (newUserPassword) userData.password = newUserPassword.trim();
 
-      let savedUser;
       if (editingUserId) {
-        savedUser = await firebaseService.updateUser(editingUserId, userData);
-        setUsers(prev => prev.map(u => String(u.id) === String(editingUserId) ? savedUser : u));
+        await firebaseService.updateUser(editingUserId, userData);
+        const updatedUser = { id: editingUserId, ...userData } as UserType;
+        setUsers(prev => prev.map(u => String(u.id) === String(editingUserId) ? updatedUser : u));
       } else {
-        savedUser = await firebaseService.createUser({
+        const savedUser = await firebaseService.createUser({
           ...userData,
           password: newUserPassword.trim()
         });
@@ -896,29 +844,6 @@ export default function Admin() {
                     Imprimir
                   </button>
                 </div>
-
-                {/* Banco de dados e persistencia */}
-                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print shadow-sm">
-                  <div className="flex-1">
-                    <h3 className="text-amber-800 font-bold text-sm mb-1 font-sans">Salvar / Atualizar Fichas no Banco de Dados</h3>
-                    <p className="text-amber-700 text-xs leading-relaxed">
-                      Para garantir que o sistema de pedidos e os leitores portáteis de câmera reconheçam suas fichas impressas para sempre, clique no botão ao lado para salvar a faixa de fichas do <strong>#{fichasRange.start} ao #{fichasRange.end}</strong> de forma permanente no banco de dados.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleSaveFichasToDatabase}
-                    disabled={isSavingFichas}
-                    className="flex items-center gap-2 px-6 py-3.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-sm transition-all shadow-sm active:scale-95 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    <RefreshCw className={`w-4 h-4 ${isSavingFichas ? 'animate-spin' : ''}`} />
-                    {isSavingFichas ? 'Salvando no Banco...' : 'Gravar Fichas no Sistema'}
-                  </button>
-                </div>
-                {fichasSaveSuccess && (
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-4 text-xs font-bold no-print shadow-sm transition-all">
-                    {fichasSaveSuccess}
-                  </div>
-                )}
 
                 <div 
                   id="qr-capture-container"

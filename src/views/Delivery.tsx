@@ -46,10 +46,14 @@ export default function Delivery({ orders }: { orders: Order[] }) {
 
     const ficha = await firebaseService.resolveFicha(cleaned);
     
-    const normalizeTicket = (t: string) => String(t).trim().replace(/^0+/, '') || '0';
-
     // Find ANY active order by ticket number (status not delivered)
-    const order = orders.find(o => normalizeTicket(o.ticket_number) === normalizeTicket(ficha) && o.status !== 'delivered');
+    const order = orders.find(o => {
+      const ticket = String(o.ticket_number).trim();
+      if (ticket === ficha && o.status !== 'delivered') return true;
+      const nt = parseInt(ticket, 10);
+      const nf = parseInt(ficha, 10);
+      return !isNaN(nt) && !isNaN(nf) && nt === nf && o.status !== 'delivered';
+    });
     if (order) {
       deliverOrder(order.id);
     }

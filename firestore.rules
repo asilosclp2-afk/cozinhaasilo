@@ -86,13 +86,6 @@ service cloud.firestore {
              data.created_at is timestamp;
     }
 
-    function isValidReceptionDraft(data) {
-      return data.keys().hasAll(['ticket_number', 'items', 'updated_at']) &&
-             data.ticket_number is string &&
-             data.items is list &&
-             data.updated_at is timestamp;
-    }
-
     match /categories/{categoryId} {
       allow read: if isSignedIn();
       // Allow creation for seeding if it's a valid category
@@ -145,12 +138,6 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidExtraFicha(incoming());
       allow update: if false; // Use delete/create for changes
       allow delete: if isAdmin();
-    }
-
-    match /reception_drafts/{draftId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidReceptionDraft(incoming());
-      allow delete: if isSignedIn();
     }
   }
 }

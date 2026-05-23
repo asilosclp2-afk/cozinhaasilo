@@ -62,11 +62,12 @@ export default function Kitchen({ orders }: { orders: Order[] }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [orders, scanBuffer]);
 
-  const processScannedCode = (code: string) => {
-    const cleaned = code.trim();
-    if (!cleaned) return;
+  const processScannedCode = async (code: string) => {
+    const rawCleaned = code.trim();
+    if (!rawCleaned) return;
     
-    console.log('Kitchen: Scanned code:', cleaned);
+    const cleaned = await firebaseService.resolveFicha(rawCleaned);
+    console.log('Kitchen: Scanned code resolved to:', cleaned);
     
     // Find order by ticket number in ALL orders to allow transition from ready to delivered
     const order = orders.find(o => {
@@ -84,7 +85,8 @@ export default function Kitchen({ orders }: { orders: Order[] }) {
         updateStatus(order.id, 'ready');
         // Play success sound
         try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3');
+          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
+          audio.volume = 1.0; // Max volume for kitchen loudness
           audio.play().catch(() => {});
         } catch (e) {}
       } else if (order.status === 'ready') {
@@ -93,6 +95,7 @@ export default function Kitchen({ orders }: { orders: Order[] }) {
         // Play a different sound or the same one for delivery
         try {
           const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3');
+          audio.volume = 1.0; // Max volume for kitchen loudness
           audio.play().catch(() => {});
         } catch (e) {}
       }

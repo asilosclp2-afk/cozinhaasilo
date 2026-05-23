@@ -278,9 +278,8 @@ export const firebaseService = {
 
   async createOrder(ticketNumber: string, items: any[]): Promise<Order> {
     try {
-      const normalizedTicket = ticketNumber.trim().replace(/^0+/, '') || '0';
       const docData = {
-        ticket_number: normalizedTicket,
+        ticket_number: ticketNumber,
         items,
         status: 'pending',
         created_at: serverTimestamp(),
@@ -360,10 +359,9 @@ export const firebaseService = {
 
   async checkFichaActive(ticketNumber: string): Promise<Order | null> {
     try {
-      const normalizedTicket = ticketNumber.trim().replace(/^0+/, '') || '0';
       const q = query(
         collection(db, COLLECTIONS.ORDERS),
-        where('ticket_number', '==', normalizedTicket),
+        where('ticket_number', '==', ticketNumber),
         where('status', 'in', ['pending', 'preparing', 'ready']),
         limit(1)
       );
@@ -679,169 +677,84 @@ export const firebaseService = {
     }
   },
 
+  parseQR(code: string): { type: 'ticket' | 'product' | 'unknown'; value: string } {
+    const cleaned = code.trim().toLowerCase();
+    if (!cleaned) {
+      return { type: 'unknown', value: '' };
+    }
+
+    // 1. Check for standard Ticket/Ficha keyword formats
+    const fichaMatch = cleaned.match(/^ficha[- ]?(\d+)$/i);
+    if (fichaMatch) {
+      const val = parseInt(fichaMatch[1], 10);
+      return { type: 'ticket', value: String(val) };
+    }
+
+    // 2. Normalization: If starts with '117', strip it
+    let normalized = cleaned;
+    if (normalized.startsWith('117')) {
+      normalized = normalized.substring(3);
+    }
+
+    // 3. Match the first 4 consecutive digits (since we want to read the 4 numbers of the QR code)
+    const match4 = normalized.match(/(\d{4})/);
+    if (match4) {
+      const value4 = match4[1];
+      const numericVal = parseInt(value4, 10);
+      if (numericVal >= 800) {
+        return { type: 'product', value: value4 };
+      } else {
+        return { type: 'ticket', value: String(numericVal) };
+      }
+    }
+
+    // 4. Fallback: Check if purely numeric on the normalized code
+    if (/^\d+$/.test(normalized)) {
+      const numericVal = parseInt(normalized, 10);
+      if (numericVal >= 800) {
+        return { type: 'product', value: normalized.padStart(4, '0') };
+      } else {
+        return { type: 'ticket', value: String(numericVal) };
+      }
+    }
+
+    // 5. Fallback: Split by common separators and check first segment
+    const firstPart = normalized.split(/[-/_ ]+/)[0];
+    if (/^\d+$/.test(firstPart)) {
+      const numericVal = parseInt(firstPart, 10);
+      if (numericVal >= 800) {
+        return { type: 'product', value: firstPart.substring(0, 4).padStart(4, '0') };
+      } else {
+        return { type: 'ticket', value: String(numericVal) };
+      }
+    }
+
+    return { type: 'unknown', value: cleaned };
+  },
+
   async resolveFicha(code: string): Promise<string> {
     try {
       const cleaned = code.trim();
-      if (!cleaned) return '';
 
-      // Smart URL and prefix detection to extract ficha number
-      let urlFicha: string | null = null;
-      if (cleaned.startsWith('http://') || cleaned.startsWith('https://') || cleaned.includes('.app') || cleaned.includes('/') || cleaned.includes('?')) {
-        try {
-          // Parse as URL if possible, otherwise clean and search query params/slashes manually
-          let urlObj: URL | null = null;
-          try {
-            urlObj = new URL(cleaned);
-          } catch (e) {
-            // Try to make it a valid URL if missing protocol
-            if (!cleaned.startsWith('http')) {
-              urlObj = new URL('http://' + cleaned);
-            }
-          }
-
-          if (urlObj) {
-            const params = ['ficha', 'ticket', 'id', 'num', 'number', 'code', 'q'];
-            for (const param of params) {
-              const val = urlObj.searchParams.get(param);
-              if (val && /^\d+$/.test(val)) {
-                urlFicha = val;
-                break;
-              }
-            }
-            if (!urlFicha) {
-              const segments = urlObj.pathname.split('/').filter(Boolean);
-              for (let i = segments.length - 1; i >= 0; i--) {
-                const segment = segments[i];
-                if (/^\d+$/.test(segment)) {
-                  urlFicha = segment;
-                  break;
-                } else {
-                  const m = segment.match(/FICHA[- _]?(\d+)/i);
-                  if (m) {
-                    urlFicha = m[1];
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.error("Smart URL processing in resolveFicha failed:", e);
-        }
+      const parsed = this.parseQR(cleaned);
+      if (parsed.type === 'ticket') {
+        return parsed.value;
       }
 
-      if (urlFicha) {
-        return urlFicha.replace(/^0+/, '') || '0';
+      if (parsed.type === 'product') {
+        return ''; // Decidedly NOT a ticket!
       }
 
-      // 1. Direct match with numeric (normalization: strip leading zeros)
-      if (/^\d+$/.test(cleaned)) {
-        return cleaned.replace(/^0+/, '') || '0';
-      }
-
-      // Match FICHA[- _]?(\d+) pattern (normalization: strip leading zeros)
-      const match = cleaned.match(/FICHA[- _]?(\d+)/i);
-      if (match) {
-        return match[1].replace(/^0+/, '') || '0';
-      }
-
-      // 2. Check Extra Fichas collection
+      // 3. Check Extra Fichas collection
       const q = query(collection(db, COLLECTIONS.EXTRA_FICHAS), where('code', '==', cleaned));
       const snap = await getDocs(q);
       if (!snap.empty) {
         return snap.docs[0].data().alias;
       }
 
-      // 3. If it's a custom/alphanumeric QR code and not found in Extra Fichas,
-      // AUTOMATICALLY save/register it in the system. Extract any numeric sequences
-      // to determine a smart user-friendly displays/alias (e.g., https://.../047 -> "47")
-      let autoAlias = cleaned;
-      const digitMatch = cleaned.match(/(\d+)/);
-      if (digitMatch) {
-        autoAlias = digitMatch[1].replace(/^0+/, '') || '0';
-      }
-
-      // Save to database so this code is forever recognized and mapped to this alias safely
-      const newFichaRef = doc(collection(db, COLLECTIONS.EXTRA_FICHAS));
-      await setDoc(newFichaRef, {
-        code: cleaned,
-        alias: autoAlias,
-        created_at: serverTimestamp()
-      });
-
-      return autoAlias;
+      return cleaned; // Fallback to raw code
     } catch (e) {
-      console.error("resolveFicha error:", e);
       return code;
     }
-  },
-
-  async registerExtraFichasBatch(items: { code: string, alias: string }[]): Promise<void> {
-    try {
-      const snap = await getDocs(collection(db, COLLECTIONS.EXTRA_FICHAS));
-      const existingCodes = new Set(snap.docs.map(doc => doc.data().code));
-
-      const batch = writeBatch(db);
-      let count = 0;
-      
-      for (const item of items) {
-        if (!existingCodes.has(item.code)) {
-          const docRef = doc(collection(db, COLLECTIONS.EXTRA_FICHAS));
-          batch.set(docRef, {
-            code: item.code,
-            alias: item.alias,
-            created_at: serverTimestamp()
-          });
-          count++;
-          if (count >= 400) break;
-        }
-      }
-      
-      if (count > 0) {
-        await batch.commit();
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, COLLECTIONS.EXTRA_FICHAS);
-    }
-  },
-
-  // --- RECEPTION DRAFTS ---
-  async updateActiveReceptionDraft(ticketNumber: string, items: { name: string; quantity: number }[]): Promise<void> {
-    try {
-      const docRef = doc(db, 'reception_drafts', 'current');
-      await setDoc(docRef, {
-        ticket_number: String(ticketNumber),
-        items,
-        updated_at: serverTimestamp()
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'reception_drafts/current');
-    }
-  },
-
-  async clearActiveReceptionDraft(): Promise<void> {
-    try {
-      const docRef = doc(db, 'reception_drafts', 'current');
-      await deleteDoc(docRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'reception_drafts/current');
-    }
-  },
-
-  listenToActiveReceptionDraft(callback: (draft: { ticket_number: string; items: { name: string; quantity: number }[] } | null) => void) {
-    const docRef = doc(db, 'reception_drafts', 'current');
-    return onSnapshot(docRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        callback({
-          ticket_number: data.ticket_number || '',
-          items: data.items || [],
-        });
-      } else {
-        callback(null);
-      }
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'reception_drafts/current');
-    });
   }
 };
