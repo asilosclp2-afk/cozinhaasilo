@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), tailwindcss()],
+    base: '/cozinhaasilo/',
     build: {
       outDir: 'dist',
       emptyOutDir: true,
