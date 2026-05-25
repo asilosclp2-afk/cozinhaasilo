@@ -10,6 +10,7 @@ export type SoundOption = {
 };
 
 export const EXTERNAL_ALERTS: SoundOption[] = [
+  { id: 'uploaded-ext', name: '🎵 [Arquivo Carregado] Som Customizado', isSynth: false },
   { id: 'mcdonalds-double', name: 'McDonald\'s Duplo (Sintetizador)', isSynth: true },
   { id: 'mcdonalds-triple', name: 'McDonald\'s Triplo (Sintetizador)', isSynth: true },
   { id: 'dingdong-synth', name: 'Campainha Ding-Dong (Sintetizador)', isSynth: true },
@@ -20,6 +21,7 @@ export const EXTERNAL_ALERTS: SoundOption[] = [
 ];
 
 export const INTERNAL_ALERTS: SoundOption[] = [
+  { id: 'uploaded-int', name: '🎵 [Arquivo Carregado] Som Customizado', isSynth: false },
   { id: 'mixkit-bell', name: 'Sino de Balcão (Mixkit - Convencional)', url: 'https://assets.mixkit.co/active_storage/sfx/911/911-preview.mp3' },
   { id: 'chirp-synth', name: 'Chirp Suave (Sintetizador)', isSynth: true },
   { id: 'double-beep-synth', name: 'Bi-Bip Digital (Sintetizador)', isSynth: true },
@@ -28,6 +30,51 @@ export const INTERNAL_ALERTS: SoundOption[] = [
   { id: 'mixkit-scan', name: 'Bip Metálico de Scanner (Mixkit)', url: 'https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3' },
   { id: 'custom', name: 'Som Customizado (URL)', isSynth: false },
 ];
+
+const DB_NAME = 'ArraiaAudioDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'audios';
+
+function getDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function storeUploadedAudio(key: string, base64Data: string, fileName: string): Promise<void> {
+  const db = await getDB();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.put({ base64Data, fileName }, key);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function getUploadedAudio(key: string): Promise<{ base64Data: string, fileName: string } | null> {
+  try {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const request = store.get(key);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (err) {
+    console.error('getUploadedAudio error:', err);
+    return null;
+  }
+}
 
 class AudioService {
   private getAudioContext(): AudioContext | null {
@@ -202,6 +249,26 @@ class AudioService {
   playExternalReadySound() {
     const { extId, extUrl, extVol } = this.getSettings();
 
+    if (extId === 'uploaded-ext') {
+      getUploadedAudio('uploaded-ext').then(ret => {
+        if (ret && ret.base64Data) {
+          try {
+            const audio = new Audio(ret.base64Data);
+            audio.volume = extVol;
+            audio.play().catch(e => console.warn('Playback of uploaded external audio failed:', e));
+          } catch (err) {
+            console.error('Uploaded audio playback error, falling back to synth.');
+            this.playMcdonaldsDouble(extVol);
+          }
+        } else {
+          this.playMcdonaldsDouble(extVol);
+        }
+      }).catch(() => {
+        this.playMcdonaldsDouble(extVol);
+      });
+      return;
+    }
+
     // Synth alert check
     if (extId === 'mcdonalds-double') {
       this.playMcdonaldsDouble(extVol);
@@ -242,6 +309,25 @@ class AudioService {
   // Trigger Internal Order Input Arrival sound
   playInternalOrderSound() {
     const { intId, intUrl, intVol } = this.getSettings();
+
+    if (intId === 'uploaded-int') {
+      getUploadedAudio('uploaded-int').then(ret => {
+        if (ret && ret.base64Data) {
+          try {
+            const audio = new Audio(ret.base64Data);
+            audio.volume = intVol;
+            audio.play().catch(e => console.warn('Playback of uploaded internal audio failed:', e));
+          } catch (err) {
+            this.playChirpSynth(intVol);
+          }
+        } else {
+          this.playChirpSynth(intVol);
+        }
+      }).catch(() => {
+        this.playChirpSynth(intVol);
+      });
+      return;
+    }
 
     // Synth checks
     if (intId === 'chirp-synth') {
@@ -289,6 +375,7 @@ class AudioService {
     } catch (e) {}
   }
 
+  // Play direct external ready sound for specific manual actions if needed
   playKitchenSuccessDelivered() {
     try {
       const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3');
@@ -308,6 +395,28 @@ class AudioService {
   // Sound triggering triggers with sound IDs for testing
   testSound(id: string, isExternal: boolean, customUrl = '', volume = 1.0) {
     console.log('Testing sound:', id, 'isExternal:', isExternal, 'customUrl:', customUrl);
+
+    if (id === 'uploaded-ext' || id === 'uploaded-int') {
+      getUploadedAudio(id).then(ret => {
+        if (ret && ret.base64Data) {
+          try {
+            const audio = new Audio(ret.base64Data);
+            audio.volume = volume;
+            audio.play().catch(e => {
+              alert('Erro ao reproduzir o som carregado. Verifique se o arquivo é um áudio válido (como .mp3 ou .wav) e tente recarregá-lo.');
+            });
+          } catch (err) {
+            alert('Erro ao carregar o arquivo de áudio local.');
+          }
+        } else {
+          alert('Nenhum arquivo de áudio foi carregado para essa opção ainda neste navegador. Arraste ou selecione um arquivo de som no uploader correspondente abaixo para testá-lo!');
+        }
+      }).catch(err => {
+        alert('Erro ao acessar o banco de dados IndexedDB: ' + err);
+      });
+      return;
+    }
+
     if (id === 'custom' && customUrl) {
       try {
         const audio = new Audio(customUrl);

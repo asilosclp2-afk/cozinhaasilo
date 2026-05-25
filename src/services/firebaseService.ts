@@ -753,5 +753,48 @@ export const firebaseService = {
     } catch (e) {
       return code;
     }
+  },
+
+  async saveGlobalAudioSettings(settings: any): Promise<void> {
+    try {
+      const docRef = doc(db, 'settings', 'audio');
+      await setDoc(docRef, settings, { merge: true });
+    } catch (error) {
+      console.error('Error saving global settings', error);
+    }
+  },
+
+  async saveUploadedAudioFile(key: 'uploaded-ext' | 'uploaded-int', base64Data: string, fileName: string): Promise<void> {
+    try {
+      const docId = key === 'uploaded-ext' ? 'uploaded_ext' : 'uploaded_int';
+      const docRef = doc(db, 'settings', docId);
+      await setDoc(docRef, { base64Data, fileName }, { merge: true });
+    } catch (error) {
+      console.error(`Error saving uploaded audio file ${key}`, error);
+      throw error;
+    }
+  },
+
+  listenToGlobalAudioSettings(callback: (data: any) => void): () => void {
+    const docRef = doc(db, 'settings', 'audio');
+    return onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        callback(docSnap.data());
+      }
+    }, (err) => {
+      console.error('Error listening to global settings:', err);
+    });
+  },
+
+  listenToUploadedAudioFile(key: 'uploaded-ext' | 'uploaded-int', callback: (data: any) => void): () => void {
+    const docId = key === 'uploaded-ext' ? 'uploaded_ext' : 'uploaded_int';
+    const docRef = doc(db, 'settings', docId);
+    return onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        callback(docSnap.data());
+      }
+    }, (err) => {
+      console.error(`Error listening to uploaded audio file ${key}:`, err);
+    });
   }
 };

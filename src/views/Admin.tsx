@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, User, Utensils, Shield, Layers, Edit2, X, Key, QrCode as QrCodeIcon, Download, Printer, FileDown, RefreshCw, Camera, Eye, Volume2, Play } from 'lucide-react';
+import { Plus, Trash2, User, Utensils, Shield, Layers, Edit2, X, Key, QrCode as QrCodeIcon, Download, Printer, FileDown, RefreshCw, Camera, Eye, Volume2, Play, Upload, Music } from 'lucide-react';
 import { MenuItem, User as UserType, Category } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
 import { jsPDF } from 'jspdf';
@@ -7,7 +7,7 @@ import html2canvas from 'html2canvas';
 import { Html5Qrcode } from 'html5-qrcode';
 import { motion } from 'motion/react';
 import { firebaseService } from '../services/firebaseService';
-import { audioService, EXTERNAL_ALERTS, INTERNAL_ALERTS } from '../services/audioService';
+import { audioService, EXTERNAL_ALERTS, INTERNAL_ALERTS, storeUploadedAudio, getUploadedAudio } from '../services/audioService';
 
 export default function Admin() {
   const [activeTab, setActiveTab] = useState<'menu' | 'users' | 'categories' | 'qrcodes' | 'sounds'>('menu');
@@ -1187,11 +1187,176 @@ export default function Admin() {
 function SoundSettingsPanel() {
   const [settings, setSettings] = useState(() => audioService.getSettings());
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [extFileName, setExtFileName] = useState<string>('');
+  const [intFileName, setIntFileName] = useState<string>('');
+  const [isDraggingExt, setIsDraggingExt] = useState(false);
+  const [isDraggingInt, setIsDraggingInt] = useState(false);
+
+  useEffect(() => {
+    getUploadedAudio('uploaded-ext').then(ret => {
+      if (ret) setExtFileName(ret.fileName);
+    }).catch(err => console.error('Error fetching ext audio', err));
+
+    getUploadedAudio('uploaded-int').then(ret => {
+      if (ret) setIntFileName(ret.fileName);
+    }).catch(err => console.error('Error fetching int audio', err));
+  }, []);
+
+  const saveAllSettings = async (
+    updatedSettings: typeof settings, 
+    uploadedFilesInfo?: { ext?: { base64: string, name: string }, int?: { base64: string, name: string } }
+  ) => {
+    // 1. Save locally in current browser instance
+    audioService.saveSettings(updatedSettings);
+    
+    // 2. Build payload for Firebase Firestore
+    const payload: any = {
+      extId: updatedSettings.extId,
+      intId: updatedSettings.intId,
+      extUrl: updatedSettings.extUrl,
+      intUrl: updatedSettings.intUrl,
+      extVol: updatedSettings.extVol,
+      intVol: updatedSettings.intVol,
+    };
+
+    if (uploadedFilesInfo?.ext) {
+      payload.uploadedExtFileName = uploadedFilesInfo.ext.name;
+    }
+    if (uploadedFilesInfo?.int) {
+      payload.uploadedIntFileName = uploadedFilesInfo.int.name;
+    }
+
+    try {
+      // Save metadata settings
+      await firebaseService.saveGlobalAudioSettings(payload);
+
+      // Save massive file base64 data to separate documents
+      if (uploadedFilesInfo?.ext) {
+        await firebaseService.saveUploadedAudioFile('uploaded-ext', uploadedFilesInfo.ext.base64, uploadedFilesInfo.ext.name);
+      }
+      if (uploadedFilesInfo?.int) {
+        await firebaseService.saveUploadedAudioFile('uploaded-int', uploadedFilesInfo.int.base64, uploadedFilesInfo.int.name);
+      }
+    } catch (e) {
+      console.warn('Failed to sync to firebase, saved locally:', e);
+    }
+  };
 
   const handleSave = () => {
-    audioService.saveSettings(settings);
+    saveAllSettings(settings);
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
+  };
+
+  const handleFileUpload = async (file: File | undefined, isExternal: boolean) => {
+    if (!file) return;
+
+    // Limit to 600KB to fit easily inside the 1MB Firestore document limit
+    if (file.size > 600 * 1024) {
+      alert('Erro: O arquivo é muito grande (máximo 600KB para sincronização de TV / displays em tempo real). Para reproduzir sons mais pesados, use a opção "Som Customizado (URL)" colando o link direto.');
+      return;
+    }
+
+    if (!file.type.startsWith('audio/')) {
+      alert('Erro: Por favor, selecione um arquivo de áudio válido (.mp3, .wav, .ogg, .m4a, etc.).');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const base64Data = e.target?.result as string;
+      if (base64Data) {
+        const key = isExternal ? 'uploaded-ext' : 'uploaded-int';
+        try {
+          await storeUploadedAudio(key, base64Data, file.name);
+          if (isExternal) {
+            setExtFileName(file.name);
+            setSettings(prev => {
+              const updated = { ...prev, extId: 'uploaded-ext' };
+              saveAllSettings(updated, { ext: { base64: base64Data, name: file.name } });
+              return updated;
+            });
+          } else {
+            setIntFileName(file.name);
+            setSettings(prev => {
+              const updated = { ...prev, intId: 'uploaded-int' };
+              saveAllSettings(updated, { int: { base64: base64Data, name: file.name } });
+              return updated;
+            });
+          }
+          setSaveSuccess(true);
+          setTimeout(() => setSaveSuccess(false), 3000);
+        } catch (err) {
+          alert('Erro ao guardar o arquivo no banco de dados local: ' + err);
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleClearUpload = async (isExternal: boolean) => {
+    const key = isExternal ? 'uploaded-ext' : 'uploaded-int';
+    try {
+      await storeUploadedAudio(key, '', '');
+      if (isExternal) {
+        setExtFileName('');
+        setSettings(prev => {
+          const nextModel = prev.extId === 'uploaded-ext' ? 'mcdonalds-double' : prev.extId;
+          const updated = { ...prev, extId: nextModel };
+          // Clear file pointers in Firestore as well
+          firebaseService.saveGlobalAudioSettings({
+            ...updated,
+            uploadedExtFileName: ''
+          }).catch(console.error);
+          firebaseService.saveUploadedAudioFile('uploaded-ext', '', '').catch(console.error);
+          audioService.saveSettings(updated);
+          return updated;
+        });
+      } else {
+        setIntFileName('');
+        setSettings(prev => {
+          const nextModel = prev.intId === 'uploaded-int' ? 'mixkit-bell' : prev.intId;
+          const updated = { ...prev, intId: nextModel };
+          // Clear file pointers in Firestore as well
+          firebaseService.saveGlobalAudioSettings({
+            ...updated,
+            uploadedIntFileName: ''
+          }).catch(console.error);
+          firebaseService.saveUploadedAudioFile('uploaded-int', '', '').catch(console.error);
+          audioService.saveSettings(updated);
+          return updated;
+        });
+      }
+      alert('Áudio customizado removido.');
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Drag and drop handlers
+  const handleDragOver = (e: React.DragEvent, isExternal: boolean) => {
+    e.preventDefault();
+    if (isExternal) setIsDraggingExt(true);
+    else setIsDraggingInt(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent, isExternal: boolean) => {
+    e.preventDefault();
+    if (isExternal) setIsDraggingExt(false);
+    else setIsDraggingInt(false);
+  };
+
+  const handleDrop = (e: React.DragEvent, isExternal: boolean) => {
+    e.preventDefault();
+    if (isExternal) {
+      setIsDraggingExt(false);
+      const file = e.dataTransfer.files?.[0];
+      handleFileUpload(file, true);
+    } else {
+      setIsDraggingInt(false);
+      const file = e.dataTransfer.files?.[0];
+      handleFileUpload(file, false);
+    }
   };
 
   return (
@@ -1215,13 +1380,13 @@ function SoundSettingsPanel() {
       {/* Caixa de Dica / Ajuda */}
       <div className="bg-[#5A5A40]/5 border border-[#5A5A40]/10 rounded-3xl p-6 text-sm text-[#5A5A40] space-y-2">
         <h4 className="font-bold flex items-center gap-1.5 text-base">
-          💡 Biblioteca de Sons e Upload Customizado
+          💡 Sincronização em Tempo Real de Áudios Customizados
         </h4>
         <p className="leading-relaxed">
-          O sistema conta com <strong>sintetizadores de áudio nativos do navegador</strong> para garantir máxima compatibilidade e confiabilidade com som limpo e alto, sem depender da internet! A opção do <strong>McDonald's</strong> e da <strong>Campainha Ding-Dong</strong> usam essa tecnologia.
+          Você pode enviar qualquer arquivo de áudio (<strong>como .mp3, .wav, .m4a ou .ogg de até 600KB</strong>) escolha ou arraste o arquivo abaixo. <strong>O áudio é salvo automaticamente e sincronizado instantaneamente em tempo real com todos os outros dispositivos conectados!</strong> (como TVs de chamada, painéis da cozinha e celulares/tablets).
         </p>
         <p className="leading-relaxed">
-          <strong>Quer usar um som totalmente seu?</strong> Você pode colar o link direto de qualquer arquivo .mp3 na internet no campo "URL de Som Customizado" ou nos enviar o arquivo de áudio pela conversa aqui do chat para que possamos salvar no sistema para você usar!
+          O sistema também armazena uma cópia em cache local de forma persistente, garantindo máxima velocidade de carregamento e compatibilidade de áudio sem depender de internet após sincronizados.
         </p>
       </div>
 
@@ -1249,9 +1414,67 @@ function SoundSettingsPanel() {
                   className="w-full p-4 bg-white rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#5A5A40] text-sm"
                 >
                   {EXTERNAL_ALERTS.map(opt => (
-                    <option key={opt.id} value={opt.id}>{opt.name}</option>
+                    <option 
+                      key={opt.id} 
+                      value={opt.id}
+                      disabled={opt.id === 'uploaded-ext' && !extFileName}
+                    >
+                      {opt.id === 'uploaded-ext' && extFileName ? `🎵 [Carregado] ${extFileName}` : opt.name}
+                    </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Uploader para Alerta Externo */}
+              <div className="mt-2 text-left">
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Upload de arquivo de Áudio (.mp3 / .wav)</label>
+                <div
+                  onDragOver={(e) => handleDragOver(e, true)}
+                  onDragLeave={(e) => handleDragLeave(e, true)}
+                  onDrop={(e) => handleDrop(e, true)}
+                  className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                    isDraggingExt 
+                      ? 'border-yellow-400 bg-yellow-50/55' 
+                      : extFileName 
+                        ? 'border-emerald-200 bg-emerald-50/20 hover:bg-emerald-50/30' 
+                        : 'border-gray-200 hover:border-[#5A5A40] bg-white'
+                  }`}
+                >
+                  <input
+                    type="file"
+                    id="audio-upload-ext"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files?.[0], true)}
+                  />
+                  <label htmlFor="audio-upload-ext" className="cursor-pointer flex flex-col items-center justify-center space-y-2">
+                    <Upload className={`w-8 h-8 ${extFileName ? 'text-emerald-500' : 'text-gray-400'}`} />
+                    {extFileName ? (
+                      <div className="text-center">
+                        <span className="text-xs font-bold text-emerald-600 block mb-1">✓ Áudio Salvo no Banco!</span>
+                        <span className="text-sm font-mono font-medium text-gray-700 truncate block max-w-xs">{extFileName}</span>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <span className="text-sm font-bold text-gray-700 block">Escolha ou arraste o arquivo</span>
+                        <span className="text-xs text-gray-400 font-medium">Arquivos MP3, WAV, M4A de até 15MB</span>
+                      </div>
+                    )}
+                  </label>
+                  {extFileName && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation(); e.preventDefault();
+                        handleClearUpload(true);
+                      }}
+                      className="mt-4 px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold rounded-lg flex items-center justify-center gap-1 mx-auto transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Remover Som Carregado
+                    </button>
+                  )}
+                </div>
               </div>
 
               {settings.extId === 'custom' && (
@@ -1317,9 +1540,67 @@ function SoundSettingsPanel() {
                   className="w-full p-4 bg-white rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#5A5A40] text-sm"
                 >
                   {INTERNAL_ALERTS.map(opt => (
-                    <option key={opt.id} value={opt.id}>{opt.name}</option>
+                    <option 
+                      key={opt.id} 
+                      value={opt.id}
+                      disabled={opt.id === 'uploaded-int' && !intFileName}
+                    >
+                      {opt.id === 'uploaded-int' && intFileName ? `🎵 [Carregado] ${intFileName}` : opt.name}
+                    </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Uploader para Alerta Interno */}
+              <div className="mt-2 text-left">
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Upload de arquivo de Áudio (.mp3 / .wav)</label>
+                <div
+                  onDragOver={(e) => handleDragOver(e, false)}
+                  onDragLeave={(e) => handleDragLeave(e, false)}
+                  onDrop={(e) => handleDrop(e, false)}
+                  className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                    isDraggingInt 
+                      ? 'border-[#5A5A40] bg-[#5A5A40]/5' 
+                      : intFileName 
+                        ? 'border-emerald-200 bg-emerald-50/20 hover:bg-emerald-50/30' 
+                        : 'border-gray-200 hover:border-[#5A5A40] bg-white'
+                  }`}
+                >
+                  <input
+                    type="file"
+                    id="audio-upload-int"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files?.[0], false)}
+                  />
+                  <label htmlFor="audio-upload-int" className="cursor-pointer flex flex-col items-center justify-center space-y-2">
+                    <Upload className={`w-8 h-8 ${intFileName ? 'text-emerald-500' : 'text-gray-400'}`} />
+                    {intFileName ? (
+                      <div className="text-center">
+                        <span className="text-xs font-bold text-emerald-600 block mb-1">✓ Áudio Salvo no Banco!</span>
+                        <span className="text-sm font-mono font-medium text-gray-700 truncate block max-w-xs">{intFileName}</span>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <span className="text-sm font-bold text-gray-700 block">Escolha ou arraste o arquivo</span>
+                        <span className="text-xs text-gray-400 font-medium">Arquivos MP3, WAV, M4A de até 15MB</span>
+                      </div>
+                    )}
+                  </label>
+                  {intFileName && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation(); e.preventDefault();
+                        handleClearUpload(false);
+                      }}
+                      className="mt-4 px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold rounded-lg flex items-center justify-center gap-1 mx-auto transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Remover Som Carregado
+                    </button>
+                  )}
+                </div>
               </div>
 
               {settings.intId === 'custom' && (

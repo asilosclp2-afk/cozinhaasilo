@@ -17,7 +17,7 @@ import {
   Layers
 } from 'lucide-react';
 import { firebaseService } from './services/firebaseService';
-import { audioService } from './services/audioService';
+import { audioService, storeUploadedAudio } from './services/audioService';
 import { Order, User } from './types';
 import Reception from './views/Reception';
 import Kitchen from './views/Kitchen';
@@ -87,6 +87,49 @@ export default function App() {
     };
     init();
   }, []);
+
+  useEffect(() => {
+    if (!isAuthReady) return;
+
+    // Listen to global settings metadata in real-time across all devices
+    const unsubscribeSettings = firebaseService.listenToGlobalAudioSettings((data) => {
+      if (!data) return;
+
+      // Update local storage settings instantly for playing sounds
+      audioService.saveSettings({
+        extId: data.extId,
+        extUrl: data.extUrl,
+        extVol: data.extVol,
+        intId: data.intId,
+        intUrl: data.intUrl,
+        intVol: data.intVol
+      });
+    });
+
+    // Listen to uploaded external audio changes in real-time
+    const unsubscribeExtAudio = firebaseService.listenToUploadedAudioFile('uploaded-ext', (data) => {
+      if (data && data.base64Data !== undefined) {
+        storeUploadedAudio('uploaded-ext', data.base64Data, data.fileName || 'Som Customizado Externo').catch(err => {
+          console.error('Failed to cache synced external audio:', err);
+        });
+      }
+    });
+
+    // Listen to uploaded internal audio changes in real-time
+    const unsubscribeIntAudio = firebaseService.listenToUploadedAudioFile('uploaded-int', (data) => {
+      if (data && data.base64Data !== undefined) {
+        storeUploadedAudio('uploaded-int', data.base64Data, data.fileName || 'Som Customizado Interno').catch(err => {
+          console.error('Failed to cache synced internal audio:', err);
+        });
+      }
+    });
+
+    return () => {
+      unsubscribeSettings();
+      unsubscribeExtAudio();
+      unsubscribeIntAudio();
+    };
+  }, [isAuthReady]);
 
   useEffect(() => {
     if (!isAuthReady || !currentUser) {
